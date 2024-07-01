@@ -3,7 +3,6 @@ scope = "Parent"
 from = "replace_expression_with_boolean_literal"
 to = ["boolean_literal_cleanup"]
 
-
 [[edges]]
 scope = "Parent"
 from = "boolean_literal_cleanup"
