@@ -62,7 +62,7 @@ pub fn default_cleanup_comments_buffer() -> i32 {
 }
 
 pub fn default_cleanup_comments() -> bool {
-  false
+  true
 }
 
 pub fn default_global_tag_prefix() -> String {
@@ -102,7 +102,7 @@ pub fn default_piranha_language() -> PiranhaLanguage {
 }
 
 pub fn default_delete_consecutive_new_lines() -> bool {
-  false
+  true
 }
 
 pub(crate) fn default_query() -> CGPattern {
@@ -194,7 +194,7 @@ pub(crate) fn default_allow_dirty_ast() -> bool {
 }
 
 pub(crate) fn default_graph_validation() -> bool {
-  true
+  false
 }
 
 pub(crate) fn default_experiment_dyn() -> bool {
