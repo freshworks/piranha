@@ -1082,6 +1082,33 @@ query = """
 replace = ""
 replace_node = "call"
 
+# Before 
+#  context 'empty context block' do
+#
+#  end
+# After 
+#  
+[[rules]]
+name = "remove_empty_context"
+groups = ["block_removal"]
+query = """
+(
+(call
+  method: (identifier) @method
+  [
+    (block
+        !body
+    )
+    (do_block
+        !body
+    )
+  ]
+)@call
+(#eq? @method "context")
+)
+"""
+replace = ""
+replace_node = "call"
 
 # Before :
 # def fourth_method
