@@ -1,0 +1,6 @@
+cargo run --bin polyglot_piranha --no-default-features
+
+
+./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='msp?'
+
+./target/debug/polyglot_piranha -c erb_test/sample.rb -f erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'

@@ -56,6 +56,7 @@ pub(crate) struct SourceCodeUnit {
   substitutions: HashMap<String, String>,
   // The path to the source code.
   #[get = "pub"]
+  #[set = "pub(crate)"]
   path: PathBuf,
 
   // Rewrites applied to this source code unit
@@ -322,6 +323,9 @@ impl SourceCodeUnit {
   ///
   /// Note - Causes side effect. - Updates `self.ast` and `self.code`
   pub(crate) fn apply_edit(&mut self, edit: &Edit, parser: &mut Parser) -> InputEdit {
+    // Log the source code before applying the edit
+    debug!("Source code before edit:\n{}", self.code);
+    debug!("Applying edit: {:?}", edit);
     // Get the tree_sitter's input edit representation
     let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
     // Apply edit to the tree
@@ -378,6 +382,23 @@ impl SourceCodeUnit {
       .filter(|e| e.0.starts_with(self.piranha_arguments.global_tag_prefix()))
       .map(|(a, b)| (a.to_string(), b.to_string()))
       .collect()
+  }
+
+  /// Process ERB file contents: parse as ERB, extract Ruby ranges, and return Ruby code as a string
+  pub(crate) fn extract_ruby_code_from_erb(&self, erb_content: &str) -> Option<String> {
+    use crate::models::erb_processor::ErbProcessor;
+    let erb_processor = ErbProcessor::new();
+    // Extract Ruby ranges from ERB
+    if let Ok(ruby_ranges) = erb_processor.extract_ruby_ranges_with_tree_sitter(erb_content) {
+      let mut ruby_code = String::new();
+      for range in &ruby_ranges {
+        ruby_code.push_str(&erb_content[range.start_byte..range.end_byte]);
+        ruby_code.push('\n');
+      }
+      Some(ruby_code)
+    } else {
+      None
+    }
   }
 }
 
