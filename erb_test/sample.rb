@@ -1,4 +1,4 @@
-Account.current.msp?
+if Account.current.msp?
   security_desk_url = "https://#{@portal_url}/admin/security"
 end
 if !Account.current.msp?

@@ -19,6 +19,7 @@ use polyglot_piranha::{
     language::PiranhaLanguage, 
     piranha_arguments::{PiranhaArguments, PiranhaArgumentsBuilder}, piranha_output::PiranhaOutputSummary},
 };
+use serde::de;
 use tree_sitter::{Parser, Range};
 
 /// Demo function showing proper tree-sitter multi-language parsing for ERB
@@ -46,80 +47,91 @@ fn demo_erb_parsing() {
   println!();
 
   // Step 2: Extract ranges for HTML content and Ruby code
-  let mut html_ranges = Vec::new();
+  let mut content_ranges = Vec::new();
   let mut ruby_ranges = Vec::new();
-  extract_ranges(erb_root, erb_content_ref, &mut html_ranges, &mut ruby_ranges);
+  extract_ranges(erb_root, erb_content_ref, &mut content_ranges, &mut ruby_ranges);
 
   println!("Extracted ranges:");
-  println!("HTML ranges: {} found", html_ranges.len());
-  for (i, range) in html_ranges.iter().enumerate() {
-    let text = &erb_content_ref[range.start_byte..range.end_byte];
-    println!("  HTML {}: {:?} -> {:?}", i, range, text);
-  }
-  
   println!("Ruby ranges: {} found", ruby_ranges.len());
+  let mut ruby_snippet: String = String::new();
   for (i, range) in ruby_ranges.iter().enumerate() {
     let text = &erb_content_ref[range.start_byte..range.end_byte];
+    ruby_snippet.push_str(text);  
     println!("  Ruby {}: {:?} -> {:?}", i, range, text);
   }
   println!();
 
-  // Step 3: Parse HTML using only the content ranges
-  if !html_ranges.is_empty() {
-    parser.set_language(tree_sitter_html::language()).unwrap();
-    parser.set_included_ranges(&html_ranges).unwrap();
-    if let Some(html_tree) = parser.parse(erb_content_ref, None) {
-      println!("HTML AST (parsed from ranges):");
-      println!("{}", html_tree.root_node().to_sexp());
-      println!();
-    }
+  println!("Extracted content ranges:");
+  println!("content ranges: {} found", content_ranges.len());
+  for (i, range) in content_ranges.iter().enumerate() {
+    let text = &erb_content_ref[range.start_byte..range.end_byte];
+    println!("  content {}: {:?} -> {:?}", i, range, text);
   }
+  println!();
 
   // Step 4: Parse Ruby using only the code ranges  
   if !ruby_ranges.is_empty() {
+
+    let args = PiranhaArguments::from_cli();
     parser.set_language(tree_sitter_ruby::language()).unwrap();
     parser.set_included_ranges(&ruby_ranges).unwrap();
     if let Some(ruby_tree) = parser.parse(erb_content_ref, None) {
       println!("Ruby AST (parsed from ranges):");
-      println!("{}", ruby_tree.root_node().to_sexp());
+      println!("{}", ruby_snippet);
       println!();
+      // let  node_text = ruby_tree.root_node().utf8_text(erb_content_ref.as_bytes()).unwrap();
+      println!("Ruby Code snippet for cleanup \n{}", ruby_snippet);
+      let piranha_args = PiranhaArgumentsBuilder::default()
+        .path_to_configurations("/Users/bsunder/uber/piranha/erb_test/rules.toml".to_string())
+        .code_snippet(ruby_snippet.to_owned())
+        .substitutions(args.substitutions().clone())
+        .language(PiranhaLanguage::from("ruby"))
+        .allow_dirty_ast(true)
+        .build();
+
+      let cleaned = execute_piranha(&piranha_args);
+      println!("Piranha cleaned output:");
+      for summary in cleaned {
+        println!("{}", summary.content());
+      }
     }
   }
 
   // Step 5: Run Piranha cleanup on each Ruby code range
-  println!("\n=== Piranha Cleanup on Ruby Ranges ===");
-  for (i, range) in ruby_ranges.iter().enumerate() {
-    let ruby_code = &erb_content_ref[range.start_byte..range.end_byte];
-    println!("\nRuby Range {}: {:?}", i, range);
-    println!("Original Ruby code:\n{}", ruby_code);
+  // println!("\n=== Piranha Cleanup on Ruby Ranges ===");
+  // for (i, range) in ruby_ranges.iter().enumerate() {
+  //   let ruby_code = &erb_content_ref[range.start_byte..range.end_byte];
+  //   println!("\nRuby Range {}: {:?}", i, range);
+  //   println!("Original Ruby code:\n{}", ruby_code);
 
-    // Prepare minimal arguments for Piranha using the builder pattern
-    let piranha_args = PiranhaArgumentsBuilder::default()
-        .paths_to_codebase(vec!["/Users/bsunder/uber/piranha/erb_test".to_string()])
-        .path_to_configurations("/Users/bsunder/uber/piranha/erb_test/rules.toml".to_string())
-        .language(PiranhaLanguage::from("ruby"))
-        .dry_run(true)
-        .build();
+  //   // Prepare minimal arguments for Piranha using the builder pattern
+  //   let piranha_args = PiranhaArgumentsBuilder::default()
+  //       .paths_to_codebase(vec!["/Users/bsunder/uber/piranha/erb_test".to_string()])
+  //       .path_to_configurations("/Users/bsunder/uber/piranha/erb_test/rules.toml".to_string())
+  //       .language(PiranhaLanguage::from("erb"))
+  //       .dry_run(true)
+  //       .allow_dirty_ast(true)
+  //       .build();
 
-    // Run Piranha cleanup on the extracted Ruby code
-    let cleaned = execute_piranha(&piranha_args);
-    println!("Piranha cleaned output:");
-    for summary in cleaned {
-      println!("{}", summary.content());
-    }
-  }
-  println!("=== End Piranha Cleanup Demo ===\n");
+  //   // Run Piranha cleanup on the extracted Ruby code
+  //   let cleaned = execute_piranha(&piranha_args);
+  //   println!("Piranha cleaned output:");
+  //   for summary in cleaned {
+  //     println!("{}", summary.content());
+  //   }
+  // }
 
+  // Step 5: Run piranha cleanups for ruby code string
   println!("=== End ERB Demo ===");
   println!();
 }
 
 /// Extract HTML and Ruby ranges from the ERB AST
-fn extract_ranges(node: tree_sitter::Node, source: &str, html_ranges: &mut Vec<Range>, ruby_ranges: &mut Vec<Range>) {
+fn extract_ranges(node: tree_sitter::Node, source: &str, content_ranges: &mut Vec<Range>, ruby_ranges: &mut Vec<Range>) {
   let node_type = node.kind();
   // Check if this is a content node (HTML) or code node (Ruby)
   if node_type == "content" {
-    html_ranges.push(Range {
+    content_ranges.push(Range {
       start_byte: node.start_byte(),
       end_byte: node.end_byte(),
       start_point: node.start_position(),
@@ -140,11 +152,22 @@ fn extract_ranges(node: tree_sitter::Node, source: &str, html_ranges: &mut Vec<R
   // Recursively process children
   for i in 0..node.child_count() {
     if let Some(child) = node.child(i) {
-      extract_ranges(child, source, html_ranges, ruby_ranges);
+      extract_ranges(child, source, content_ranges, ruby_ranges);
     }
   }
 }
 
+
+fn demo_rb_piranha_cleanups() {
+  let args = PiranhaArguments::from_cli();
+
+  let piranha_output_summaries = execute_piranha(&args);
+
+  if let Some(path) = args.path_to_output_summary() {
+    write_output_summary(piranha_output_summaries, path);
+  }
+
+}
 fn main() {
   // Set up the Ctrl+C handler
   ctrlc::set_handler(move || {
@@ -154,16 +177,18 @@ fn main() {
   .expect("Error setting Ctrl+C handler");
 
   // Add ERB parsing demo
-  demo_erb_parsing();
+  // demo_erb_parsing();
+
+  demo_rb_parsing();
+  return;
 
   let now = Instant::now();
   env_logger::init();
-
+  // return;
   info!("Executing Polyglot Piranha");
 
   let args = PiranhaArguments::from_cli();
 
-  debug!("Piranha Arguments are \n{args:#?}");
   let piranha_output_summaries = execute_piranha(&args);
 
   if let Some(path) = args.path_to_output_summary() {

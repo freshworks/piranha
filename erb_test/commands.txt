@@ -1,6 +1,10 @@
 cargo run --bin polyglot_piranha --no-default-features
 
-
+erb_branch
+for erb
 ./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='msp?'
+for ruby
+./target/debug/polyglot_piranha -c /Users/bsunder/uber/piranha/erb_test -f /Users/bsunder/uber/piranha/erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
 
+Prestaging
 ./target/debug/polyglot_piranha -c erb_test/sample.rb -f erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'

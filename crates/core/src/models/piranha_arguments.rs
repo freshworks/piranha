@@ -294,6 +294,11 @@ impl PiranhaArguments {
       .build()
   }
 
+  /// Public getter for substitutions
+  pub fn substitutions(&self) -> &Vec<(String, String)> {
+    &self.substitutions
+  }
+
   pub(crate) fn input_substitutions(&self) -> HashMap<String, String> {
     self.substitutions.iter().cloned().collect()
   }
