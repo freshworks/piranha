@@ -1,10 +1,24 @@
 cargo run --bin polyglot_piranha --no-default-features
 
+cargo build --no-default-features
+
 erb_branch
 for erb
-./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='msp?'
+RUST_LOG=DEBUG ./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='msp?'
+RUST_LOG=DEBUG ./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='mee_multiple_portals_erm?'
 for ruby
-./target/debug/polyglot_piranha -c /Users/bsunder/uber/piranha/erb_test -f /Users/bsunder/uber/piranha/erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
+RUST_LOG=TRACE ./target/debug/polyglot_piranha -c /Users/bsunder/uber/piranha/erb_test -f /Users/bsunder/uber/piranha/erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
 
 Prestaging
 ./target/debug/polyglot_piranha -c erb_test/sample.rb -f erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
+
+ruby code snippet
+./target/debug/polyglot_piranha -f /Users/bsunder/uber/piranha/erb_test --code-snippet  "if Account.current.msp? security_desk_url = 'https://#{@portal_url}/admin/security' end"  -l ruby -s treated=true -s cleanup_flag_name='msp?'
+
+
+ITILDESK
+
+
+RUST_LOG=DEBUG ./target/debug/polyglot_piranha -c /Users/bsunder/itildesk -f erb_test -l erb -s treated=true -s cleanup_flag_name='mee_multiple_portals_erm?'
+
+

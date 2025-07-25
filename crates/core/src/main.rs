@@ -14,24 +14,25 @@
 //! Defines the entry-point for Piranha.
 use std::{fs, process, time::Instant};
 use log::{debug, info};
+use tree_sitter::Query;
 use polyglot_piranha::{
   execute_piranha, models::{
-    language::PiranhaLanguage, 
-    piranha_arguments::{PiranhaArguments, PiranhaArgumentsBuilder}, piranha_output::PiranhaOutputSummary},
+    default_configs::ERB, language::PiranhaLanguage, piranha_arguments::{PiranhaArguments, PiranhaArgumentsBuilder}, piranha_output::PiranhaOutputSummary},
 };
 use serde::de;
 use tree_sitter::{Parser, Range};
-
+use polyglot_piranha::utilities::tree_sitter_utilities::get_all_matches_for_query;
+use polyglot_piranha::models::default_configs::RUBY;
 /// Demo function showing proper tree-sitter multi-language parsing for ERB
 fn demo_erb_parsing() {
-  println!("=== Tree-sitter ERB Multi-language Parsing Demo ===");
+  println!("=== Tree-sitter ERB Multi-language Range-based POC ===");
   
   // Read ERB content from file
   let erb_content = std::fs::read_to_string("/Users/bsunder/uber/piranha/erb_test/sample.html.erb")
     .expect("Failed to read ERB file");
   let erb_content_ref = &erb_content;
 
-  println!("ERB Content:");
+  println!("Original ERB Content:");
   println!("{}", erb_content_ref);
   println!();
 
@@ -51,78 +52,115 @@ fn demo_erb_parsing() {
   let mut ruby_ranges = Vec::new();
   extract_ranges(erb_root, erb_content_ref, &mut content_ranges, &mut ruby_ranges);
 
-  println!("Extracted ranges:");
-  println!("Ruby ranges: {} found", ruby_ranges.len());
-  let mut ruby_snippet: String = String::new();
+  println!("Extracted Ruby ranges: {} found", ruby_ranges.len());
   for (i, range) in ruby_ranges.iter().enumerate() {
     let text = &erb_content_ref[range.start_byte..range.end_byte];
-    ruby_snippet.push_str(text);  
-    println!("  Ruby {}: {:?} -> {:?}", i, range, text);
+    println!("  Ruby {}: bytes[{}..{}] -> '{}'", i, range.start_byte, range.end_byte, text);
   }
   println!();
 
-  println!("Extracted content ranges:");
-  println!("content ranges: {} found", content_ranges.len());
-  for (i, range) in content_ranges.iter().enumerate() {
-    let text = &erb_content_ref[range.start_byte..range.end_byte];
-    println!("  content {}: {:?} -> {:?}", i, range, text);
+  // Step 3: Parse Ruby using ranges on the ORIGINAL ERB text
+  parser.set_language(tree_sitter_ruby::language()).unwrap();
+  parser.set_included_ranges(&ruby_ranges).unwrap();
+  
+  // Parse the ORIGINAL ERB text with Ruby ranges - this is the key insight!
+  let ruby_tree = parser.parse(erb_content_ref, None).unwrap();
+  let ruby_root = ruby_tree.root_node();
+  
+  println!("Ruby AST (parsed from original ERB with ranges):");
+  println!("{}", ruby_root.to_sexp());
+  println!();
+
+  // Step 4: Create a query to find feature flag patterns
+  let ruby_language = PiranhaLanguage::from(RUBY);
+  let ruby_query = Query::new(
+    *ruby_language.language(),
+    r#"
+      (((call
+        method: (identifier) @flag_name
+      )@flag_exp
+      )
+      (#eq? @flag_name "msp?")
+      )    
+    "#,
+  ).unwrap();
+
+  // Step 5: Find matches in the Ruby tree (positions refer to original ERB!)
+  let matches = get_all_matches_for_query(
+    &ruby_root,
+    erb_content_ref.to_string(),
+    &ruby_query,
+    true,
+    None,
+    None,
+  );
+
+  println!("Ruby matches found: {}", matches.len());
+  for (i, match_) in matches.iter().enumerate() {
+    let range = match_.range();
+    let matched_text = &erb_content_ref[*range.start_byte()..*range.end_byte()];
+    println!("  Match {}: bytes[{}..{}] -> '{}' (in original ERB!)", 
+             i, range.start_byte(), range.end_byte(), matched_text);
   }
   println!();
 
-  // Step 4: Parse Ruby using only the code ranges  
-  if !ruby_ranges.is_empty() {
-
-    let args = PiranhaArguments::from_cli();
-    parser.set_language(tree_sitter_ruby::language()).unwrap();
-    parser.set_included_ranges(&ruby_ranges).unwrap();
-    if let Some(ruby_tree) = parser.parse(erb_content_ref, None) {
-      println!("Ruby AST (parsed from ranges):");
-      println!("{}", ruby_snippet);
-      println!();
-      // let  node_text = ruby_tree.root_node().utf8_text(erb_content_ref.as_bytes()).unwrap();
-      println!("Ruby Code snippet for cleanup \n{}", ruby_snippet);
-      let piranha_args = PiranhaArgumentsBuilder::default()
-        .path_to_configurations("/Users/bsunder/uber/piranha/erb_test/rules.toml".to_string())
-        .code_snippet(ruby_snippet.to_owned())
-        .substitutions(args.substitutions().clone())
-        .language(PiranhaLanguage::from("ruby"))
-        .allow_dirty_ast(true)
-        .build();
-
-      let cleaned = execute_piranha(&piranha_args);
-      println!("Piranha cleaned output:");
-      for summary in cleaned {
-        println!("{}", summary.content());
-      }
+  // Step 6: Apply transformations directly to original ERB text
+  if !matches.is_empty() {
+    let mut updated_erb = erb_content_ref.to_string();
+    
+    // Sort matches by position (reverse order to avoid offset shifts)
+    let mut sorted_matches = matches.clone();
+    sorted_matches.sort_by(|a, b| b.range().start_byte().cmp(a.range().start_byte()));
+    
+    println!("Applying transformations to original ERB:");
+    for (i, match_) in sorted_matches.iter().enumerate() {
+      let range = match_.range();
+      let old_text = &updated_erb[*range.start_byte()..*range.end_byte()];
+      let new_text = "true"; // Replace msp? with true
+      
+      println!("  Transformation {}: '{}' -> '{}' at bytes[{}..{}]", 
+               i, old_text, new_text, range.start_byte(), range.end_byte());
+      
+      updated_erb.replace_range(*range.start_byte()..*range.end_byte(), new_text);
     }
+    
+    println!();
+    println!("Updated ERB Content:");
+    println!("{}", updated_erb);
+    println!();
+    
+    // Step 7: Verify the transformation by parsing the updated content
+    println!("Verification - parsing updated ERB:");
+    let updated_erb_tree = parser.parse(&updated_erb, Some(&erb_tree)).unwrap();
+    let updated_erb_root = updated_erb_tree.root_node();
+    
+    // Extract ranges from updated ERB
+    let mut updated_content_ranges = Vec::new();
+    let mut updated_ruby_ranges = Vec::new();
+    extract_ranges(updated_erb_root, &updated_erb, &mut updated_content_ranges, &mut updated_ruby_ranges);
+    
+    // Parse Ruby from updated ERB
+    parser.set_language(tree_sitter_ruby::language()).unwrap();
+    parser.set_included_ranges(&updated_ruby_ranges).unwrap();
+    let updated_ruby_tree = parser.parse(&updated_erb, None).unwrap();
+    
+    println!("Updated Ruby AST:");
+    println!("{}", updated_ruby_tree.root_node().to_sexp());
+    
+    // Check if msp? matches still exist
+    let verification_matches = get_all_matches_for_query(
+      &updated_ruby_tree.root_node(),
+      updated_erb.to_string(),
+      &ruby_query,
+      true,
+      None,
+      None,
+    );
+    
+    println!("Verification - msp? matches remaining: {}", verification_matches.len());
   }
 
-  // Step 5: Run Piranha cleanup on each Ruby code range
-  // println!("\n=== Piranha Cleanup on Ruby Ranges ===");
-  // for (i, range) in ruby_ranges.iter().enumerate() {
-  //   let ruby_code = &erb_content_ref[range.start_byte..range.end_byte];
-  //   println!("\nRuby Range {}: {:?}", i, range);
-  //   println!("Original Ruby code:\n{}", ruby_code);
-
-  //   // Prepare minimal arguments for Piranha using the builder pattern
-  //   let piranha_args = PiranhaArgumentsBuilder::default()
-  //       .paths_to_codebase(vec!["/Users/bsunder/uber/piranha/erb_test".to_string()])
-  //       .path_to_configurations("/Users/bsunder/uber/piranha/erb_test/rules.toml".to_string())
-  //       .language(PiranhaLanguage::from("erb"))
-  //       .dry_run(true)
-  //       .allow_dirty_ast(true)
-  //       .build();
-
-  //   // Run Piranha cleanup on the extracted Ruby code
-  //   let cleaned = execute_piranha(&piranha_args);
-  //   println!("Piranha cleaned output:");
-  //   for summary in cleaned {
-  //     println!("{}", summary.content());
-  //   }
-  // }
-
-  // Step 5: Run piranha cleanups for ruby code string
-  println!("=== End ERB Demo ===");
+  println!("=== End ERB Range-based POC ===");
   println!();
 }
 
@@ -176,11 +214,11 @@ fn main() {
   })
   .expect("Error setting Ctrl+C handler");
 
-  // Add ERB parsing demo
+    // Add ERB parsing demo
   // demo_erb_parsing();
 
-  demo_rb_parsing();
-  return;
+  // demo_rb_parsing();
+  // return;
 
   let now = Instant::now();
   env_logger::init();
@@ -188,7 +226,7 @@ fn main() {
   info!("Executing Polyglot Piranha");
 
   let args = PiranhaArguments::from_cli();
-
+  println!("args: {:?}", args);
   let piranha_output_summaries = execute_piranha(&args);
 
   if let Some(path) = args.path_to_output_summary() {

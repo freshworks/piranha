@@ -278,7 +278,7 @@ impl std::str::FromStr for PiranhaLanguage {
           ))
           .scopes()
           .to_vec(),
-          comment_nodes: vec![],
+          comment_nodes: vec!["comment".to_string()],
           rules: Some(ruby_rules),
           edges: Some(ruby_edges),
         })
@@ -300,16 +300,13 @@ impl std::str::FromStr for PiranhaLanguage {
         Ok(PiranhaLanguage {
           extension: "erb".to_string(),
           supported_language: SupportedLanguage::Erb,
-          // For ERB, we'll use a hybrid approach: 
-          // - Custom ERB processing for flag replacement
-          // - Ruby parser for cleanup rules on the processed content
           language: tree_sitter_ruby::language(),
           scopes: parse_toml::<ScopeConfig>(include_str!(
             "../cleanup_rules/ruby/scope_config.toml"
           ))
           .scopes()
           .to_vec(),
-          comment_nodes: vec![],
+          comment_nodes: vec!["comment".to_string()],
           rules: Some(ruby_rules),
           edges: Some(ruby_edges),
         })

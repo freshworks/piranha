@@ -135,6 +135,7 @@ impl CompiledCGPattern {
     &self, node: &Node, source_code: String, recursive: bool, replace_node: Option<String>,
     replace_node_idx: Option<u8>,
   ) -> Vec<Match> {
+
     match self {
       CompiledCGPattern::Q(query) => get_all_matches_for_query(
         node,
