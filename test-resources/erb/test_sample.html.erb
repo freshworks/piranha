@@ -1,0 +1,115 @@
+<span class="agent-count-message pull-right <%= ' padding-for-non-business' unless ws_creation_for_pro_enterprise? %>">
+  <% unless @current_account.subscription_from_cache.trial? %>
+    <% has_licenses, available_licenses = fetch_available_licenses %>
+    <% if @current_account.subscription_from_cache.agent_limit.nil? %>
+      <%= t('agent.account_suspended') %>
+    <% else %>
+        <% if has_licenses %>
+          <span class="agent-list-count bg-dark"><%=available_licenses%></span>&nbsp;
+          <%= available_licenses == 1 ? t('agent.available_seat_without_count') : t('agent.available_seats_without_count') %>
+        <% else %>
+          <span class="agent-list-count bg-red"><%=available_licenses%></span>&nbsp;
+          <%= t('agent.no_seats') %> 
+          <% if privilege?(:manage_account) %>
+            - <%= link_to t('agent.buy'), current_account.subscription_url, :class => "margin-right", :id => "agent_buy_more_link" %>
+          <% end %>
+        <% end %>
+    <% end %>
+  <% end %>
+</span>
+<ul id="agentTab" class="tabs nav-tabs agent-list-tabs">  
+  <%= agent_list_tabs %>
+</ul>
+<% if ws_creation_for_non_msp? %>
+  <% license_type = params[:license_type].blank? ? 'it_agent' : params[:license_type]
+     agent_type_count = Agent.get_agents_count_by_license_and_tab(license_type) %>
+<div class="agent-filter-alphabet-container">
+  <div class="agent-filter-container">
+    <a class="full-time-filter highlight-filter" href ="/agents/filter/active?license_type=<%= license_type %>" >
+      <%= t('agent.full_time') %>
+      <div class="full-time-count highlight-count"><%= agent_type_count["active_count"] %></div>
+    </a>
+    <% if params[:license_type] != 'business_agent' %>
+    <a class="occasional-filter" href="/agents/filter/occasional?license_type=<%= license_type %>">
+      <%= t('agent.occasional') %>
+      <div class="occasional-count"><%= agent_type_count["occasional_count"] %></div>
+    </a>
+    <% end %>
+    <a class="deactivated-filter <%= ' filter-margin' if params[:license_type] == 'business_agent' %>" href ="/agents/filter/deactivated?license_type=<%= license_type %>">
+      <%= t('js_translations.sandbox.deactivated') %>
+      <div class="deactivated-count"><%= agent_type_count["deactivated_count"] %></div>
+    </a>
+  </div>
+<% end %>
+<% addon_enabled = Account.current.business_agent_type_addon? %>
+<div class="<%= ws_creation_for_non_msp? ? 'dynamic-alpha-container' : 'row-fluid' %>  alpha-container">
+  <% if (params[:state]!= "deleted" ) %>
+    <div class="sort_list <%= ' sort-list-zero-margin' if ws_creation_for_non_msp? %>" align="left">
+      <ul class="alpha_sort_list">
+        <li class="first <%= 'active' if params[:letter].blank? %>">
+          <%= link_to 'All', letter_filter_link_params('', params[:state], params[:license_type]), :"data-pjax" => "#body-container"%>
+        </li>
+        <% "A".upto("Z") do |l| -%>
+         <li class="<%= 'active' if params[:letter] == "#{l}" %>">
+          <%= link_to l, letter_filter_link_params(l, params[:state], params[:license_type]), :"data-pjax" => "#body-container"%>
+         </li>
+        <% end %>
+      </ul>
+    </div>
+    <% if addon_enabled && !ws_creation_for_non_msp? %>
+      <div class='agent-state-container'>
+        <%= select(:agent, :license_type, options_for_select(agent_states(params[:license_type]), selected: selected_agent_type), {},{:class => "select2 input-xlarge", :id => "agent-state"}) %>
+      </div>
+    <% end %>
+  <% end %>
+</div>
+<% if ws_creation_for_non_msp? %>
+</div>
+<% end %>
+
+<script type="text/javascript">
+jQuery("#agent_buy_more_link").on('click', function(e) {
+  var isActiveUser  = <%= User.current.active? && User.current.primary_email.verified? %>;
+  var ubxSubscriptionId = <%= current_account.subscription_from_cache.ubx_subscription_id.present? %>;
+  e.preventDefault();
+  if (!isActiveUser) toastr.error('<%=t("subscription.error.user_inactive")%>');
+  else if(!ubxSubscriptionId) toastr.error('<%= t("subscription.error.subscription_not_available") %>');
+  else {
+    var href = jQuery(this).attr('href');
+    window.open(href, '_blank');
+  }
+})
+<% if addon_enabled || ws_creation_for_non_msp? %>
+  jQuery(document).ready(function () {
+    jQuery('#agent-state').on('change', function () {
+      window.location.href = jQuery("#agent-state").val();
+    });
+    var agentType, filterTypes = [];
+    if(window.location.href.includes('active')){
+        agentType = 'full-time';
+        filterTypes = ['occasional', 'deactivated'];
+    }
+    else if(window.location.href.includes('occasional')){
+        agentType = 'occasional';
+        filterTypes = ['full-time', 'deactivated'];
+    }
+    else if(window.location.href.includes('deactivated')){
+        agentType = 'deactivated';
+        filterTypes = ['full-time', 'occasional'];
+    }
+    jQuery('.'+agentType+'-filter').addClass('highlight-filter');
+    jQuery('.'+agentType+'-filter .'+agentType+'-count').addClass('highlight-count');
+    filterTypes.forEach(function (filterType) {
+        jQuery('.' + filterType + '-filter').removeClass('highlight-filter');
+        jQuery('.' + filterType + '-filter .' + filterType + '-count').removeClass('highlight-count');
+    });
+
+    if(jQuery('#agent-filters #agentTab li').length ===0) {
+        <% if @current_account.subscription_from_cache.trial? %>
+          jQuery('#agent-filters #agentTab').remove();
+        <% end %>
+        jQuery('#agent-filters').addClass('agent-filter-no-agent-tab');
+    }
+  });
+<% end %>
+</script>
