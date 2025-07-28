@@ -12,22 +12,17 @@
 */
 
 //! Defines the entry-point for Piranha.
+use std::{fs, time::Instant};
 use log::{debug, info};
-use polyglot_piranha::models::default_configs::RUBY;
-use polyglot_piranha::utilities::tree_sitter_utilities::get_all_matches_for_query;
+use tree_sitter::Query;
 use polyglot_piranha::{
-  execute_piranha,
-  models::{
-    default_configs::ERB,
-    language::PiranhaLanguage,
-    piranha_arguments::{PiranhaArguments, PiranhaArgumentsBuilder},
-    piranha_output::PiranhaOutputSummary,
-  },
+  execute_piranha, models::{
+    default_configs::ERB, language::PiranhaLanguage, piranha_arguments::{PiranhaArguments, PiranhaArgumentsBuilder}, piranha_output::PiranhaOutputSummary},
 };
 use serde::de;
-use std::{fs, time::Instant};
-use tree_sitter::Query;
 use tree_sitter::{Parser, Range};
+use polyglot_piranha::utilities::tree_sitter_utilities::get_all_matches_for_query;
+use polyglot_piranha::models::default_configs::RUBY;
 /// Demo function showing proper tree-sitter multi-language parsing for ERB
 fn demo_erb_parsing() {
   println!("=== Tree-sitter ERB Multi-language Range-based POC ===");
@@ -44,8 +39,7 @@ fn demo_erb_parsing() {
   // Step 1: Parse the entire document as ERB using embedded-template parser
   let mut parser = Parser::new();
   parser
-    .set_language(tree_sitter_embedded_template::language().into())
-    .unwrap();
+    .set_language(tree_sitter_embedded_template::language().into()).unwrap();
   let erb_tree = parser.parse(erb_content_ref, None).unwrap();
   let erb_root = erb_tree.root_node();
 
@@ -56,20 +50,12 @@ fn demo_erb_parsing() {
   // Step 2: Extract ranges for HTML content and Ruby code
   let mut content_ranges = Vec::new();
   let mut ruby_ranges = Vec::new();
-  extract_ranges(
-    erb_root,
-    erb_content_ref,
-    &mut content_ranges,
-    &mut ruby_ranges,
-  );
+  extract_ranges(erb_root, erb_content_ref, &mut content_ranges, &mut ruby_ranges);
 
   println!("Extracted Ruby ranges: {} found", ruby_ranges.len());
   for (i, range) in ruby_ranges.iter().enumerate() {
     let text = &erb_content_ref[range.start_byte..range.end_byte];
-    println!(
-      "  Ruby {}: bytes[{}..{}] -> '{}'",
-      i, range.start_byte, range.end_byte, text
-    );
+    println!("  Ruby {}: bytes[{}..{}] -> '{}'", i, range.start_byte, range.end_byte, text);
   }
   println!();
 
@@ -97,8 +83,7 @@ fn demo_erb_parsing() {
       (#eq? @flag_name "msp?")
       )    
     "#,
-  )
-  .unwrap();
+  ).unwrap();
 
   // Step 5: Find matches in the Ruby tree (positions refer to original ERB!)
   let matches = get_all_matches_for_query(
@@ -114,13 +99,8 @@ fn demo_erb_parsing() {
   for (i, match_) in matches.iter().enumerate() {
     let range = match_.range();
     let matched_text = &erb_content_ref[*range.start_byte()..*range.end_byte()];
-    println!(
-      "  Match {}: bytes[{}..{}] -> '{}' (in original ERB!)",
-      i,
-      range.start_byte(),
-      range.end_byte(),
-      matched_text
-    );
+    println!("  Match {}: bytes[{}..{}] -> '{}' (in original ERB!)", 
+             i, range.start_byte(), range.end_byte(), matched_text);
   }
   println!();
 
@@ -138,14 +118,8 @@ fn demo_erb_parsing() {
       let old_text = &updated_erb[*range.start_byte()..*range.end_byte()];
       let new_text = "true"; // Replace msp? with true
 
-      println!(
-        "  Transformation {}: '{}' -> '{}' at bytes[{}..{}]",
-        i,
-        old_text,
-        new_text,
-        range.start_byte(),
-        range.end_byte()
-      );
+      println!("  Transformation {}: '{}' -> '{}' at bytes[{}..{}]", 
+               i, old_text, new_text, range.start_byte(), range.end_byte());
 
       updated_erb.replace_range(*range.start_byte()..*range.end_byte(), new_text);
     }
@@ -163,12 +137,7 @@ fn demo_erb_parsing() {
     // Extract ranges from updated ERB
     let mut updated_content_ranges = Vec::new();
     let mut updated_ruby_ranges = Vec::new();
-    extract_ranges(
-      updated_erb_root,
-      &updated_erb,
-      &mut updated_content_ranges,
-      &mut updated_ruby_ranges,
-    );
+    extract_ranges(updated_erb_root, &updated_erb, &mut updated_content_ranges, &mut updated_ruby_ranges);
 
     // Parse Ruby from updated ERB
     parser.set_language(tree_sitter_ruby::language()).unwrap();
@@ -188,10 +157,7 @@ fn demo_erb_parsing() {
       None,
     );
 
-    println!(
-      "Verification - msp? matches remaining: {}",
-      verification_matches.len()
-    );
+    println!("Verification - msp? matches remaining: {}", verification_matches.len());
   }
 
   println!("=== End ERB Range-based POC ===");
@@ -199,10 +165,7 @@ fn demo_erb_parsing() {
 }
 
 /// Extract HTML and Ruby ranges from the ERB AST
-fn extract_ranges(
-  node: tree_sitter::Node, source: &str, content_ranges: &mut Vec<Range>,
-  ruby_ranges: &mut Vec<Range>,
-) {
+fn extract_ranges(node: tree_sitter::Node, source: &str, content_ranges: &mut Vec<Range>, ruby_ranges: &mut Vec<Range>) {
   let node_type = node.kind();
   // Check if this is a content node (HTML) or code node (Ruby)
   if node_type == "content" {
@@ -232,6 +195,7 @@ fn extract_ranges(
   }
 }
 
+
 fn demo_rb_piranha_cleanups() {
   let args = PiranhaArguments::from_cli();
 
@@ -240,15 +204,15 @@ fn demo_rb_piranha_cleanups() {
   if let Some(path) = args.path_to_output_summary() {
     write_output_summary(piranha_output_summaries, path);
   }
+
 }
-
-// Add ERB parsing demo
-// demo_erb_parsing();
-
-// demo_rb_parsing();
-// return;
-
 fn main() {
+  // Add ERB parsing demo
+  // demo_erb_parsing();
+
+  // demo_rb_parsing();
+  // return;
+
   let now = Instant::now();
   env_logger::init();
 
