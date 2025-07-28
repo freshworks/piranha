@@ -512,6 +512,22 @@ impl SourceCodeUnit {
       .map(|(a, b)| (a.to_string(), b.to_string()))
       .collect()
   }
+
+  // pub(crate) fn extract_ruby_code_from_erb(&self, erb_content: &str) -> Option<String> {
+  //   // use crate::models::erb_processor::ErbProcessor;
+  //   let erb_processor = ErbProcessor::new();
+  //   // Extract Ruby ranges from ERB
+  //   if let Ok(ruby_ranges) = erb_processor.extract_ruby_blocks_with_tree_sitter(erb_content) {
+  //     let mut ruby_code = String::new();
+  //     for range in &ruby_ranges {
+  //       ruby_code.push_str(&erb_content[range.start_byte..range.end_byte]);
+  //       ruby_code.push('\n');
+  //     }
+  //     Some(ruby_code)
+  //   } else {
+  //     None
+  //   }
+  // }
 }
 
 #[cfg(test)]
