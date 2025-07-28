@@ -1,0 +1,8 @@
+<% 
+  is_service_settings_page = true 
+%>
+<% if is_service_settings_page %>
+    <%= "#{I18n.t('account.primary_language_v2')} "%>
+<% else %>
+    <%= "#{I18n.t('account.primary_language')} "%>
+<% end %>
