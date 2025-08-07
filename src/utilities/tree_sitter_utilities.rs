@@ -236,7 +236,7 @@ pub(crate) fn get_tree_sitter_edit(code: String, edit: &Edit) -> (String, InputE
 }
 
 // Finds the position (col and row number) for a given offset.
-fn position_for_offset(input: &[u8], offset: usize) -> tree_sitter::Point {
+pub fn position_for_offset(input: &[u8], offset: usize) -> tree_sitter::Point {
   let mut result = tree_sitter::Point { row: 0, column: 0 };
   for c in &input[0..offset] {
     if *c as char == '\n' {
