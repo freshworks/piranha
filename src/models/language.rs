@@ -280,7 +280,7 @@ impl std::str::FromStr for PiranhaLanguage {
           comment_nodes: vec!["comment".to_string()],
           rules: Some(ruby_rules),
           edges: Some(ruby_edges),
-        }),
+        })
       }
       ERB => {
         // ERB files are HTML with embedded Ruby code
