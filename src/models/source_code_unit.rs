@@ -449,8 +449,15 @@ impl SourceCodeUnit {
     // Log the source code before applying the edit
     debug!("Source code before edit:\n{}", self.code);
     debug!("Applying edit: {:?}", edit);
-    // Get the tree_sitter's input edit representation
-    let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
+
+    // Special handling for ERB files with replace_empty_if_true rule
+    let (new_source_code, ts_edit) =
+      if Self::is_erb_file(&self.path) && edit.matched_rule() == "replace_empty_if_true" {
+        self.handle_erb_if_true_edit(edit)
+      } else {
+        get_tree_sitter_edit(self.code.clone(), edit)
+      };
+
     // Apply edit to the tree
     let number_of_errors = self._number_of_errors();
     self.ast.edit(&ts_edit);
@@ -502,6 +509,70 @@ impl SourceCodeUnit {
   
     self.ast = new_tree;
     self.code = replacement_content.to_string();
+  }
+
+  /// Special handling for ERB files when replace_empty_if_true rule is applied
+  /// Instead of removing the entire if block, we extract and preserve the HTML content
+  fn handle_erb_if_true_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
+    use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
+
+    // We need to find the full ERB block, not just the Ruby portion
+    // The edit range is in Ruby context, but we need to find the corresponding ERB structure
+
+    // For now, let's look for the complete ERB if block in the original source
+    let source_content = &self.code;
+
+    // Find the starting <% if and the corresponding <% end %>
+    if let (Some(if_start), Some(end_pos)) =
+      (source_content.find("<% if"), source_content.rfind("<% end"))
+    {
+      // Find the closing %> for the if statement
+      if let Some(if_end) = source_content[if_start..].find("%>") {
+        let if_closing = if_start + if_end + 2; // +2 for %>
+        let end_start = end_pos;
+        let end_end = end_pos + "<% end %>".len();
+
+        // Extract the HTML content between the if closing and end start
+        let html_content = source_content[if_closing..end_start].trim();
+
+        println!(
+          "ERB if block found: if_start={}, if_closing={}, end_start={}, end_end={}",
+          if_start, if_closing, end_start, end_end
+        );
+        println!("Extracted HTML content: '{}'", html_content);
+
+        // Replace the entire ERB block with just the HTML content
+        let new_source_code = [
+          &source_content[..if_start],
+          html_content,
+          &source_content[end_end..],
+        ]
+        .concat();
+
+        println!("New source code: '{}'", new_source_code);
+
+        let len_of_replacement = html_content.as_bytes().len();
+        let old_source_code_bytes = source_content.as_bytes();
+        let new_source_code_bytes = new_source_code.as_bytes().to_vec();
+        let start_byte = if_start;
+        let old_end_byte = end_end;
+        let new_end_byte = start_byte + len_of_replacement;
+
+        let input_edit = tree_sitter::InputEdit {
+          start_byte,
+          old_end_byte,
+          new_end_byte,
+          start_position: position_for_offset(old_source_code_bytes, start_byte),
+          old_end_position: position_for_offset(old_source_code_bytes, old_end_byte),
+          new_end_position: position_for_offset(&new_source_code_bytes, new_end_byte),
+        };
+
+        return (new_source_code, input_edit);
+      }
+    }
+
+    // Fallback to default behavior if parsing fails
+    get_tree_sitter_edit(self.code.clone(), edit)
   }
 
   pub(crate) fn global_substitutions(&self) -> HashMap<String, String> {

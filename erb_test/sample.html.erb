@@ -1,8 +1,4 @@
-<% 
-  is_service_settings_page = true 
-%>
-<% if is_service_settings_page %>
-    <%= "#{I18n.t('account.primary_language_v2')} "%>
-<% else %>
-    <%= "#{I18n.t('account.primary_language')} "%>
+<% if current_account.custom_mailbox_enhancements? %>
+  <div id="outgoing-error-info" class="hide"></div>
+  <div id="incoming-error-info" class="hide"></div>
 <% end %>

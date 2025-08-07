@@ -41,7 +41,11 @@ pub fn get_all_matches_for_query(
   node: &Node, source_code: String, query: &Query, recursive: bool, replace_node: Option<String>,
   replace_node_idx: Option<u8>,
 ) -> Vec<Match> {
-  println!("node: {:?} with contents: {}", node, node.utf8_text(source_code.as_bytes()).unwrap());
+  println!(
+    "node: {:?} with contents: {}",
+    node,
+    node.utf8_text(source_code.as_bytes()).unwrap()
+  );
   let query_capture_groups = _get_query_capture_groups(node, &source_code, query);
   // In the below code, we get the code snippet corresponding to each tag for each QueryMatch.
   // It could happen that we have multiple occurrences of the same tag (in queries
@@ -236,7 +240,7 @@ pub(crate) fn get_tree_sitter_edit(code: String, edit: &Edit) -> (String, InputE
 }
 
 // Finds the position (col and row number) for a given offset.
-fn position_for_offset(input: &[u8], offset: usize) -> tree_sitter::Point {
+pub fn position_for_offset(input: &[u8], offset: usize) -> tree_sitter::Point {
   let mut result = tree_sitter::Point { row: 0, column: 0 };
   for c in &input[0..offset] {
     if *c as char == '\n' {

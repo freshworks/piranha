@@ -7,13 +7,13 @@ for erb
 RUST_LOG=DEBUG ./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='msp?'
 RUST_LOG=DEBUG ./target/debug/polyglot_piranha -c erb_test/sample.html.erb -f erb_test -l erb -s treated=true -s cleanup_flag_name='mee_multiple_portals_erm?'
 for ruby
-RUST_LOG=TRACE ./target/debug/polyglot_piranha -c /Users/bsunder/uber/piranha/erb_test -f /Users/bsunder/uber/piranha/erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
+RUST_LOG=TRACE ./target/debug/polyglot_piranha -c /Users/sukrishna/piranha/erb_test -f /Users/sukrishna/piranha/erb_test -l rb -s treated=true -s cleanup_flag_name='custom_mailbox_enhancements?'
 
 Prestaging
 ./target/debug/polyglot_piranha -c erb_test/sample.rb -f erb_test -l ruby -s treated=true -s cleanup_flag_name='msp?'
 
 ruby code snippet
-./target/debug/polyglot_piranha -f /Users/bsunder/uber/piranha/erb_test --code-snippet  "if Account.current.msp? security_desk_url = 'https://#{@portal_url}/admin/security' end"  -l ruby -s treated=true -s cleanup_flag_name='msp?'
+./target/debug/polyglot_piranha -f /Users/sukrishna/piranha/erb_test --code-snippet  "if Account.current.msp? security_desk_url = 'https://#{@portal_url}/admin/security' end"  -l rb -s treated=true -s cleanup_flag_name='custom_mailbox_enhancements?'
 
 
 ITILDESK
