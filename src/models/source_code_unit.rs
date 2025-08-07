@@ -117,16 +117,16 @@ impl SourceCodeUnit {
       .unwrap_or(false)
   }
 
-  /// Parse ERB file using Tree-sitter ranges
+  /// Parse ERB file using smart Ruby ranges that preserve HTML content  
   fn parse_erb_with_ranges(parser: &mut Parser, erb_content: &str) -> Tree {
-    // First, parse as ERB to extract ranges
+    // First, parse as ERB to extract structure
     parser.set_language(tree_sitter_embedded_template::language()).unwrap();
     parser.set_included_ranges(&[]).unwrap(); // Clear any existing ranges
 
     let erb_tree = parser.parse(erb_content, None).expect("Could not parse ERB");
     let erb_root = erb_tree.root_node();
 
-    // Extract Ruby ranges from ERB tree
+    // Extract Ruby ranges using smart approach (only ERB tags, not content between)
     let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, erb_content);
 
     if ruby_ranges.is_empty() {
@@ -147,18 +147,21 @@ impl SourceCodeUnit {
     ruby_tree
   }
 
-  /// Extract Ruby code ranges from ERB tree with proper boundary handling
+  /// Extract Ruby code ranges from ERB tree with smart content preservation
+  /// This approach extracts only the Ruby code parts (opening/closing ERB tags)
+  /// leaving HTML content between them untouched, so rules see proper structure
+  /// without considering HTML content as "empty"
   fn extract_ruby_ranges_from_erb(erb_root: &tree_sitter::Node, content: &str) -> Vec<tree_sitter::Range> {
     let mut ruby_ranges = Vec::new();
 
-    // Traverse the ERB tree to find Ruby code nodes
-    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    // Traverse the ERB tree to find Ruby code nodes, but only include the ERB tag portions
+    Self::traverse_erb_node_for_smart_ranges(erb_root, &mut ruby_ranges);
 
     // Sort ranges by start position to ensure they're in order
     ruby_ranges.sort_by_key(|range| range.start_byte);
 
     // Debug: Print the extracted ranges for troubleshooting
-    println!("DEBUG: Extracted {} Ruby ranges from ERB:", ruby_ranges.len());
+    println!("DEBUG: Extracted {} Ruby ranges from ERB (smart approach):", ruby_ranges.len());
     for (i, range) in ruby_ranges.iter().enumerate() {
       let text = &content[range.start_byte..range.end_byte];
       println!("  Range {}: bytes[{}..{}] -> '{}'", i, range.start_byte, range.end_byte, text);
@@ -167,8 +170,10 @@ impl SourceCodeUnit {
     ruby_ranges
   }
 
-  /// Extract Ruby code ranges from ERB tree, ensuring proper boundary handling
-  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>) {
+  /// Smart traversal of ERB nodes to extract only Ruby code portions
+  /// This is the key method that implements your idea - extracting separate ranges
+  /// for opening and closing ERB tags while leaving content between them
+  fn traverse_erb_node_for_smart_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>) {
     let node_type = node.kind();
 
     match node_type {
@@ -206,7 +211,7 @@ impl SourceCodeUnit {
         // Recursively traverse other nodes
         for i in 0..node.child_count() {
           if let Some(child) = node.child(i) {
-            Self::traverse_erb_node_for_ranges(&child, ranges);
+            Self::traverse_erb_node_for_smart_ranges(&child, ranges);
           }
         }
       }
@@ -450,13 +455,8 @@ impl SourceCodeUnit {
     debug!("Source code before edit:\n{}", self.code);
     debug!("Applying edit: {:?}", edit);
 
-    // Special handling for ERB files with replace_empty_if_true rule
-    let (new_source_code, ts_edit) =
-      if Self::is_erb_file(&self.path) && edit.matched_rule() == "replace_empty_if_true" {
-        self.handle_erb_if_true_edit(edit)
-      } else {
-        get_tree_sitter_edit(self.code.clone(), edit)
-      };
+    // Use standard tree-sitter edit approach - our smart range extraction handles ERB properly
+    let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
 
     // Apply edit to the tree
     let number_of_errors = self._number_of_errors();
@@ -509,70 +509,6 @@ impl SourceCodeUnit {
   
     self.ast = new_tree;
     self.code = replacement_content.to_string();
-  }
-
-  /// Special handling for ERB files when replace_empty_if_true rule is applied
-  /// Instead of removing the entire if block, we extract and preserve the HTML content
-  fn handle_erb_if_true_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
-
-    // We need to find the full ERB block, not just the Ruby portion
-    // The edit range is in Ruby context, but we need to find the corresponding ERB structure
-
-    // For now, let's look for the complete ERB if block in the original source
-    let source_content = &self.code;
-
-    // Find the starting <% if and the corresponding <% end %>
-    if let (Some(if_start), Some(end_pos)) =
-      (source_content.find("<% if"), source_content.rfind("<% end"))
-    {
-      // Find the closing %> for the if statement
-      if let Some(if_end) = source_content[if_start..].find("%>") {
-        let if_closing = if_start + if_end + 2; // +2 for %>
-        let end_start = end_pos;
-        let end_end = end_pos + "<% end %>".len();
-
-        // Extract the HTML content between the if closing and end start
-        let html_content = source_content[if_closing..end_start].trim();
-
-        println!(
-          "ERB if block found: if_start={}, if_closing={}, end_start={}, end_end={}",
-          if_start, if_closing, end_start, end_end
-        );
-        println!("Extracted HTML content: '{}'", html_content);
-
-        // Replace the entire ERB block with just the HTML content
-        let new_source_code = [
-          &source_content[..if_start],
-          html_content,
-          &source_content[end_end..],
-        ]
-        .concat();
-
-        println!("New source code: '{}'", new_source_code);
-
-        let len_of_replacement = html_content.as_bytes().len();
-        let old_source_code_bytes = source_content.as_bytes();
-        let new_source_code_bytes = new_source_code.as_bytes().to_vec();
-        let start_byte = if_start;
-        let old_end_byte = end_end;
-        let new_end_byte = start_byte + len_of_replacement;
-
-        let input_edit = tree_sitter::InputEdit {
-          start_byte,
-          old_end_byte,
-          new_end_byte,
-          start_position: position_for_offset(old_source_code_bytes, start_byte),
-          old_end_position: position_for_offset(old_source_code_bytes, old_end_byte),
-          new_end_position: position_for_offset(&new_source_code_bytes, new_end_byte),
-        };
-
-        return (new_source_code, input_edit);
-      }
-    }
-
-    // Fallback to default behavior if parsing fails
-    get_tree_sitter_edit(self.code.clone(), edit)
   }
 
   pub(crate) fn global_substitutions(&self) -> HashMap<String, String> {
