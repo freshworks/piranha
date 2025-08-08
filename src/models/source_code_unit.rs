@@ -522,55 +522,66 @@ impl SourceCodeUnit {
   fn handle_erb_if_true_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
     use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
 
-    // For ERB files, we need to handle the transformation differently
-    // The issue is that we're trying to place HTML content in a Ruby parsing context
-    // Instead, let's just apply the default tree-sitter edit and handle any errors gracefully
-    
     println!("Handling ERB if_true edit for file: {:?}", self.path);
     println!("Edit: {:?}", edit);
-    
-    // Apply the default tree-sitter edit
-    let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
-    
-    println!("New source code after edit: '{}'", new_source_code);
-    
-    // For ERB files with if_true rule, we might need to handle it as plain text replacement
-    // rather than trying to parse it as Ruby
+
+    // For ERB files with replace_empty_if_true rule, we need to extract the "then" content
     if edit.matched_rule() == "replace_empty_if_true" {
-      // Look for ERB if block pattern and handle it as text replacement
       let source_content = &self.code;
-      
-      // Find ERB if block pattern: <% if ... %> ... <% end %>
-      if let Some(if_start) = source_content.find("<% if") {
-        if let Some(end_match) = source_content[if_start..].find("<% end %>") {
-          let end_pos = if_start + end_match + "<% end %>".len();
-          
-          // Find the closing %> of the if statement
-          if let Some(if_end_offset) = source_content[if_start..].find("%>") {
-            let if_end = if_start + if_end_offset + 2;
-            
-            // Extract content between <% if ... %> and <% end %>
-            let content_between = &source_content[if_end..if_start + end_match];
-            
-            println!("ERB block content: '{}'", content_between);
-            
-            // Replace the entire ERB block with just the content
+
+      // Parse the ERB file to extract Ruby ranges
+      let mut parser = tree_sitter::Parser::new();
+      parser
+        .set_language(tree_sitter_embedded_template::language())
+        .unwrap();
+      if let Some(erb_tree) = parser.parse(source_content, None) {
+        let erb_root = erb_tree.root_node();
+
+        // Extract Ruby ranges from ERB
+        let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, source_content);
+
+        // Find if-else-end structure in the Ruby ranges
+        if ruby_ranges.len() >= 2 {
+          // Check if we have an if-else-end or if-end structure
+          let first_ruby = &source_content[ruby_ranges[0].start_byte..ruby_ranges[0].end_byte];
+          let has_else = ruby_ranges.len() >= 3
+            && source_content[ruby_ranges[1].start_byte..ruby_ranges[1].end_byte].trim() == "else";
+
+          if first_ruby.trim().starts_with("if true") {
+            // Calculate content ranges
+            let then_content_start = ruby_ranges[0].end_byte + 2; // Skip closing %>
+            let then_content_end = if has_else {
+              ruby_ranges[1].start_byte - 2 // Stop before <% else
+            } else {
+              ruby_ranges[ruby_ranges.len() - 1].start_byte - 2 // Stop before <% end
+            };
+
+            // Extract the "then" content (HTML between if and else/end)
+            let then_content = &source_content[then_content_start..then_content_end];
+
+            println!("ERB 'then' content extracted: '{}'", then_content);
+
+            // Find the complete if-block boundaries
+            let if_block_start = ruby_ranges[0].start_byte - 2; // Include <%
+            let if_block_end = ruby_ranges[ruby_ranges.len() - 1].end_byte + 2; // Include %>
+
+            // Replace the entire if-block with just the "then" content
             let new_erb_source = [
-              &source_content[..if_start],
-              content_between.trim(),
-              &source_content[end_pos..],
+              &source_content[..if_block_start],
+              then_content,
+              &source_content[if_block_end..],
             ]
             .concat();
             
             println!("New ERB source: '{}'", new_erb_source);
-            
-            let len_of_replacement = content_between.trim().as_bytes().len();
+
+            // Calculate proper InputEdit
             let old_source_code_bytes = source_content.as_bytes();
             let new_source_code_bytes = new_erb_source.as_bytes().to_vec();
-            let start_byte = if_start;
-            let old_end_byte = end_pos;
-            let new_end_byte = start_byte + len_of_replacement;
-            
+            let start_byte = if_block_start;
+            let old_end_byte = if_block_end;
+            let new_end_byte = start_byte + then_content.as_bytes().len();
+
             let erb_input_edit = tree_sitter::InputEdit {
               start_byte,
               old_end_byte,
@@ -586,6 +597,8 @@ impl SourceCodeUnit {
       }
     }
     
+    // Fallback to default tree-sitter edit
+    let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
     (new_source_code, ts_edit)
   }
 
