@@ -127,7 +127,13 @@ impl SourceCodeUnit {
     let erb_root = erb_tree.root_node();
 
     // Extract Ruby ranges from ERB tree
-    let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, erb_content);
+    let ruby_directives = Self::extract_ruby_directives_from_erb(&erb_root);
+    let ruby_ranges: Vec<tree_sitter::Range> = ruby_directives
+      .iter()
+      .filter_map(|d| d.named_child(0))
+      .filter(|c| c.kind() == "code")
+      .map(|c| c.range())
+      .collect();
 
     if ruby_ranges.is_empty() {
       // If no Ruby ranges found, create a minimal AST that won't cause syntax errors
@@ -152,67 +158,27 @@ impl SourceCodeUnit {
     ruby_tree
   }
 
-  /// Extract Ruby code ranges from ERB tree with proper boundary handling
-  fn extract_ruby_ranges_from_erb(erb_root: &tree_sitter::Node, content: &str) -> Vec<tree_sitter::Range> {
-    let mut ruby_ranges = Vec::new();
-
-    // Traverse the ERB tree to find Ruby code nodes
-    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
-
-    // Sort ranges by start position to ensure they're in order
-    ruby_ranges.sort_by_key(|range| range.start_byte);
-
-    // Debug: Print the extracted ranges for troubleshooting
-    println!("DEBUG: Extracted {} Ruby ranges from ERB:", ruby_ranges.len());
-    for (i, range) in ruby_ranges.iter().enumerate() {
-      let text = &content[range.start_byte..range.end_byte];
-      println!("  Range {}: bytes[{}..{}] -> '{}'", i, range.start_byte, range.end_byte, text);
-    }
-
-    ruby_ranges
+  /// Extract Ruby directive nodes from the ERB tree.
+  fn extract_ruby_directives_from_erb<'a>(
+    erb_root: &'a tree_sitter::Node,
+  ) -> Vec<tree_sitter::Node<'a>> {
+    let mut ruby_directives = Vec::new();
+    Self::traverse_erb_for_directives(*erb_root, &mut ruby_directives);
+    // Sort by start position to ensure they're in order
+    ruby_directives.sort_by_key(|node| node.start_byte());
+    ruby_directives
   }
 
-  /// Extract Ruby code ranges from ERB tree, ensuring proper boundary handling
-  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>) {
-    let node_type = node.kind();
-
-    match node_type {
-      "directive" => {
-        // For directive nodes, we need to find the actual Ruby code content
-        // and exclude the ERB markers (<% %>)
-        if let Some(code_node) = node.named_child(0) {
-          if code_node.kind() == "code" {
-            // The code node contains the actual Ruby code without ERB markers
-            let range = tree_sitter::Range {
-              start_byte: code_node.start_byte(),
-              end_byte: code_node.end_byte(),
-              start_point: code_node.start_position(),
-              end_point: code_node.end_position(),
-            };
-            ranges.push(range);
-          }
-        }
-      }
-      "output_directive" => {
-        // For output directives (<%=), handle similarly but preserve the structure
-        if let Some(code_node) = node.named_child(0) {
-          if code_node.kind() == "code" {
-            let range = tree_sitter::Range {
-              start_byte: code_node.start_byte(),
-              end_byte: code_node.end_byte(),
-              start_point: code_node.start_position(),
-              end_point: code_node.end_position(),
-            };
-            ranges.push(range);
-          }
-        }
+  /// Traverse the ERB tree to find Ruby directive nodes.
+  fn traverse_erb_for_directives<'a>(node: Node<'a>, directives: &mut Vec<Node<'a>>) {
+    match node.kind() {
+      "directive" | "output_directive" => {
+        directives.push(node);
       }
       _ => {
-        // Recursively traverse other nodes
-        for i in 0..node.child_count() {
-          if let Some(child) = node.child(i) {
-            Self::traverse_erb_node_for_ranges(&child, ranges);
-          }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+          Self::traverse_erb_for_directives(child, directives);
         }
       }
     }
@@ -519,7 +485,6 @@ impl SourceCodeUnit {
   /// Enhanced ERB mixed content handler for all ERB cleanup scenarios
   /// This replaces the single-case handle_erb_if_true_edit with comprehensive mixed content support
   fn handle_erb_mixed_content_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
 
     println!("Handling ERB mixed content edit for file: {:?}", self.path);
     println!("Edit rule: {}", edit.matched_rule());
@@ -548,7 +513,6 @@ impl SourceCodeUnit {
   fn handle_erb_conditional_cleanup(
     &self, edit: &Edit, source_content: &str,
   ) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
 
     // Parse the ERB file to extract structure
     let mut parser = tree_sitter::Parser::new();
@@ -556,11 +520,11 @@ impl SourceCodeUnit {
 
     if let Some(erb_tree) = parser.parse(source_content, None) {
       let erb_root = erb_tree.root_node();
-      let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, source_content);
+      let ruby_directives = Self::extract_ruby_directives_from_erb(&erb_root);
 
-      if ruby_ranges.len() >= 2 {
+      if ruby_directives.len() >= 2 {
         if let Some(result) =
-          self.process_erb_conditional_structure(&ruby_ranges, source_content, edit)
+          self.process_erb_conditional_structure(&ruby_directives, source_content)
         {
           return result;
         }
@@ -573,75 +537,72 @@ impl SourceCodeUnit {
 
   /// Process ERB conditional structure (if-else-end) with proper content extraction
   fn process_erb_conditional_structure(
-    &self, ruby_ranges: &[tree_sitter::Range], source_content: &str, edit: &Edit,
+    &self, ruby_directives: &[tree_sitter::Node], source_content: &str,
   ) -> Option<(String, tree_sitter::InputEdit)> {
     use crate::utilities::tree_sitter_utilities::position_for_offset;
 
-    // Analyze the Ruby ranges to identify if-else-end structure
-    if ruby_ranges.is_empty() {
+    // Analyze the Ruby directives to identify if-else-end structure
+    if ruby_directives.is_empty() {
       return None;
     }
 
-    let first_ruby = &source_content[ruby_ranges[0].start_byte..ruby_ranges[0].end_byte].trim();
+    let first_directive = &ruby_directives[0];
+    let first_ruby_node = first_directive.named_child(0).filter(|n| n.kind() == "code")?;
+    let first_ruby = &source_content[first_ruby_node.start_byte()..first_ruby_node.end_byte()].trim();
 
-    // Check for if condition
-    let (is_if_true, is_if_false) = if first_ruby.contains("if false") {
-      (false, true)
-    } else if first_ruby.contains("if true") {
-      (true, false)
-    } else {
-      return None;
-    };
+    // Enhanced condition evaluation using AST and substitutions
+    let condition_result = self.evaluate_erb_condition_from_ast(first_ruby)?;
+    println!("Printing the condition_result = {}", condition_result);
 
     // Find else and end positions
-    let mut else_index: Option<usize> = None;
-    let mut end_index: Option<usize> = None;
+    let mut else_directive_index: Option<usize> = None;
+    let mut end_directive_index: Option<usize> = None;
 
-    for (i, range) in ruby_ranges.iter().enumerate().skip(1) {
-      let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      if ruby_content == &"else" && else_index.is_none() {
-        else_index = Some(i);
-      } else if ruby_content == &"end" {
-        end_index = Some(i);
-        break;
+    for (i, directive) in ruby_directives.iter().enumerate().skip(1) {
+      if let Some(code_node) = directive.named_child(0).filter(|n| n.kind() == "code") {
+        let ruby_content = source_content[code_node.start_byte()..code_node.end_byte()].trim();
+        if ruby_content == "else" && else_directive_index.is_none() {
+          else_directive_index = Some(i);
+        } else if ruby_content == "end" {
+          end_directive_index = Some(i);
+          break;
+        }
       }
     }
 
-    let end_idx = end_index?; // Must have end
+    let end_idx = end_directive_index?; // Must have end
 
-    // Calculate content boundaries
-    let if_block_start = ruby_ranges[0].start_byte - 2; // Include <%
-    let if_block_end = ruby_ranges[end_idx].end_byte + 2; // Include %>
+    // Calculate content boundaries using directive nodes
+    let if_block_start = first_directive.start_byte();
+    let if_block_end = ruby_directives[end_idx].end_byte();
 
     // Determine what content to keep based on the condition
-    let kept_content = if is_if_false {
-      // For if false, keep the else branch content (if it exists)
-      if let Some(else_idx) = else_index {
-        let else_content_start = ruby_ranges[else_idx].end_byte + 2; // After %> of else
-        let else_content_end = ruby_ranges[end_idx].start_byte - 2; // Before <% of end
+    let kept_content = if !condition_result {
+      // For false condition, keep the else branch content (if it exists)
+      if let Some(else_idx) = else_directive_index {
+        let else_content_start = ruby_directives[else_idx].end_byte();
+        let else_content_end = ruby_directives[end_idx].start_byte();
         &source_content[else_content_start..else_content_end]
       } else {
         // No else branch, remove everything
         ""
       }
-    } else if is_if_true {
-      // For if true, keep the if branch content
-      let then_content_start = ruby_ranges[0].end_byte + 2; // After %> of if
-      let then_content_end = if let Some(else_idx) = else_index {
-        ruby_ranges[else_idx].start_byte - 2 // Before <% of else
+    } else {
+      // For true condition, keep the if branch content
+      let then_content_start = first_directive.end_byte();
+      let then_content_end = if let Some(else_idx) = else_directive_index {
+        ruby_directives[else_idx].start_byte()
       } else {
-        ruby_ranges[end_idx].start_byte - 2 // Before <% of end
+        ruby_directives[end_idx].start_byte()
       };
       &source_content[then_content_start..then_content_end]
-    } else {
-      return None;
     };
 
     println!("ERB conditional cleanup:");
     println!(
-      "  Condition: if {} (keeping {} branch)",
-      if is_if_true { "true" } else { "false" },
-      if is_if_false { "else" } else { "then" }
+      "  Condition: {} (keeping {} branch)",
+      if condition_result { "true" } else { "false" },
+      if !condition_result { "else" } else { "then" }
     );
     println!("  Kept content: '{}'", kept_content);
 
@@ -672,11 +633,90 @@ impl SourceCodeUnit {
     Some((new_source, input_edit))
   }
 
+  /// Enhanced condition evaluation using AST and substitutions
+  /// This method evaluates ERB conditions by parsing them as Ruby and checking against substitutions
+  fn evaluate_erb_condition_from_ast(&self, condition_code: &str) -> Option<bool> {
+    // Extract the condition expression from "if <condition>"
+    let condition_expr = if let Some(if_pos) = condition_code.find("if ") {
+      condition_code[if_pos + 3..].trim()
+    } else {
+      // If no "if" is found, it might be a standalone boolean expression
+      condition_code.trim()
+    };
+
+    println!("Evaluating ERB condition: '{}'", condition_expr);
+
+    // Try to parse as Ruby AST and evaluate
+    if let Some(result) = self.evaluate_condition_with_ruby_ast(condition_expr) {
+      println!("  Condition evaluated via AST to: {}", result);
+      return Some(result);
+    }
+
+    println!("  Could not evaluate condition, returning None");
+    None
+  }
+
+  /// Evaluate condition using Ruby AST parsing
+  fn evaluate_condition_with_ruby_ast(&self, condition_expr: &str) -> Option<bool> {
+    // Create a temporary Ruby parser to parse just the condition
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(tree_sitter_ruby::language()).is_err() {
+      return None;
+    }
+
+    // Parse the condition as a Ruby expression
+    if let Some(tree) = parser.parse(condition_expr, None) {
+      let root = tree.root_node();
+      
+      // Traverse the AST to find identifiers and evaluate them
+      return self.evaluate_ruby_ast_node(&root, condition_expr);
+    }
+
+    None
+  }
+
+  /// Recursively evaluate a Ruby AST node
+  fn evaluate_ruby_ast_node(&self, node: &tree_sitter::Node, source: &str) -> Option<bool> {
+    match node.kind() {
+      "program" => {
+        // For program nodes, evaluate the first child
+        if let Some(child) = node.named_child(0) {
+          return self.evaluate_ruby_ast_node(&child, source);
+        }
+      }
+      "call" | "identifier" => {
+        // For method calls and identifiers, check for substitutions
+        if let Ok(text) = node.utf8_text(source.as_bytes()) {
+          if let Some(value) = self.substitutions().get(text) {
+            return match value.as_str() {
+              "true" => Some(true),
+              "false" => Some(false),
+              _ => None,
+            };
+          }
+        }
+      }
+      "true" => return Some(true),
+      "false" => return Some(false),
+      _ => {
+        // For other node types, check children
+        for i in 0..node.named_child_count() {
+          if let Some(child) = node.named_child(i) {
+            if let Some(result) = self.evaluate_ruby_ast_node(&child, source) {
+              return Some(result);
+            }
+          }
+        }
+      }
+    }
+
+    None
+  }
+
   /// Handle ERB flag replacement while preserving ERB structure
   fn handle_erb_flag_replacement(
     &self, _edit: &Edit, source_content: &str,
   ) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
 
     // For flag replacement, we can use the standard tree-sitter approach
     // because it only replaces the flag expression, not structural elements
@@ -691,7 +731,6 @@ impl SourceCodeUnit {
   fn handle_erb_general_cleanup(
     &self, edit: &Edit, source_content: &str,
   ) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
 
     println!(
       "Handling general ERB cleanup for rule: {}",

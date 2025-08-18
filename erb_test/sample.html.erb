@@ -1,8 +1,10 @@
 <% if current_account.custom_mailbox_enhancements? %>
-  <% logger.info "Outgoing error detected" %>
+  <div>custom_mailbox_enhancements? = <%= current_account.custom_mailbox_enhancements? %></div>
   <div id="outgoing-error-info" class="hide"></div>
   <div id="incoming-error-info" class="hide"></div>
+  <% logger.info "Logger inside the if block" %>
 <% else %>
-  <% logger.info "Outgoing error detected" %>
+  <div>custom_mailbox_enhancements? = <%= current_account.custom_mailbox_enhancements? %></div>
+  <% logger.info "Logger inside the else block" %>
   <div id="incoming-error-info" class="hide"></div>
 <% end %>
