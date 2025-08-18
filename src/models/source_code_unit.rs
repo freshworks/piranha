@@ -530,7 +530,7 @@ impl SourceCodeUnit {
 
     // Handle different ERB cleanup scenarios
     match rule_name.as_str() {
-      "replace_if_false" | "replace_if_true" | "replace_empty_if_true" => {
+      "replace_if_false" | "replace_if_true" | "replace_empty_if_true" | "replace_if_false_with_empty_consequence" => {
         self.handle_erb_conditional_cleanup(edit, source_content)
       }
       "replace_flag_with_boolean_literal" => {
@@ -552,9 +552,7 @@ impl SourceCodeUnit {
 
     // Parse the ERB file to extract structure
     let mut parser = tree_sitter::Parser::new();
-    parser
-      .set_language(tree_sitter_embedded_template::language())
-      .unwrap();
+    parser.set_language(tree_sitter_embedded_template::language()).unwrap();
 
     if let Some(erb_tree) = parser.parse(source_content, None) {
       let erb_root = erb_tree.root_node();
