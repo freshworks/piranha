@@ -135,9 +135,7 @@ impl SourceCodeUnit {
       parser.set_language(tree_sitter_ruby::language()).unwrap();
       parser.set_included_ranges(&[]).unwrap(); // Clear ranges to parse entire content
       
-      // Try parsing as plain text - create a minimal valid Ruby program
-      let minimal_ruby = "# Empty Ruby program for ERB without Ruby code";
-      return parser.parse(minimal_ruby, None).expect("Could not create minimal Ruby AST");
+      return parser.parse(erb_content, None).expect("Could not parse as Ruby");
     }
 
     // Parse Ruby content using ranges
@@ -469,7 +467,9 @@ impl SourceCodeUnit {
     self._replace_file_contents_and_re_parse(&new_source_code, parser, true);
 
     // Panic if the number of errors increased after the edit
-    if self._number_of_errors() > number_of_errors {
+    // Skip syntax error check for ERB files that have been cleaned to HTML-only content
+    let is_cleaned_erb = Self::is_erb_file(&self.path) && !self.code.contains("<%") && !self.code.contains("%>");
+    if !is_cleaned_erb && self._number_of_errors() > number_of_errors {
       self._panic_for_syntax_error();
     }
     ts_edit
