@@ -606,16 +606,25 @@ impl SourceCodeUnit {
 
     let cond_idx = conditional_idx?;
 
-    // Find else and end positions after the conditional
+    // Find else and correct end positions after the conditional using nesting depth
     let mut else_index: Option<usize> = None;
     let mut end_index: Option<usize> = None;
+    let mut nesting = 0;
     for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
       let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      if *ruby_content == "else" && else_index.is_none() {
+      // Track nested conditionals
+      if ruby_content.starts_with("if ") || ruby_content.starts_with("unless ") || ruby_content.starts_with("elsif ") {
+        nesting += 1;
+      }
+      if *ruby_content == "else" && else_index.is_none() && nesting == 0 {
         else_index = Some(i);
       } else if *ruby_content == "end" {
-        end_index = Some(i);
-        break;
+        if nesting == 0 {
+          end_index = Some(i);
+          break;
+        } else {
+          nesting -= 1;
+        }
       }
     }
 
