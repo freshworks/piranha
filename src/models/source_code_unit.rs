@@ -519,7 +519,7 @@ impl SourceCodeUnit {
   /// Enhanced ERB mixed content handler for all ERB cleanup scenarios
   /// This replaces the single-case handle_erb_if_true_edit with comprehensive mixed content support
   fn handle_erb_mixed_content_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
+    // use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
 
     println!("Handling ERB mixed content edit for file: {:?}", self.path);
     println!("Edit rule: {}", edit.matched_rule());
@@ -531,6 +531,7 @@ impl SourceCodeUnit {
     // Handle different ERB cleanup scenarios
     match rule_name.as_str() {
       "replace_if_false" | "replace_if_true" | "replace_empty_if_true" | "replace_if_false_with_empty_consequence" => {
+        println!("Handling ERB conditional cleanup for rule: {}", rule_name);
         self.handle_erb_conditional_cleanup(edit, source_content)
       }
       "replace_flag_with_boolean_literal" => {
@@ -576,41 +577,52 @@ impl SourceCodeUnit {
     &self, ruby_ranges: &[tree_sitter::Range], source_content: &str, edit: &Edit,
   ) -> Option<(String, tree_sitter::InputEdit)> {
     use crate::utilities::tree_sitter_utilities::position_for_offset;
+    println!("Inside process_erb_conditional_structure");
 
-    // Analyze the Ruby ranges to identify if-else-end structure
+    // Search for the correct conditional block among all ruby_ranges
     if ruby_ranges.is_empty() {
       return None;
     }
 
-    let first_ruby = &source_content[ruby_ranges[0].start_byte..ruby_ranges[0].end_byte].trim();
+    let mut conditional_idx: Option<usize> = None;
+    let mut is_if_true = false;
+    let mut is_if_false = false;
 
-    // Check for if condition
-    let (is_if_true, is_if_false) = if first_ruby.contains("if false") {
-      (false, true)
-    } else if first_ruby.contains("if true") {
-      (true, false)
-    } else {
-      return None;
-    };
+    // Find the index of the conditional block (if true/if false)
+    for (i, range) in ruby_ranges.iter().enumerate() {
+      let ruby_code = &source_content[range.start_byte..range.end_byte].trim();
+      if ruby_code.starts_with("if ") {
+        if ruby_code.contains("true") {
+          conditional_idx = Some(i);
+          is_if_true = true;
+          break;
+        } else if ruby_code.contains("false") {
+          conditional_idx = Some(i);
+          is_if_false = true;
+          break;
+        }
+      }
+    }
 
-    // Find else and end positions
+    let cond_idx = conditional_idx?;
+
+    // Find else and end positions after the conditional
     let mut else_index: Option<usize> = None;
     let mut end_index: Option<usize> = None;
-
-    for (i, range) in ruby_ranges.iter().enumerate().skip(1) {
+    for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
       let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      if ruby_content == &"else" && else_index.is_none() {
+      if *ruby_content == "else" && else_index.is_none() {
         else_index = Some(i);
-      } else if ruby_content == &"end" {
+      } else if *ruby_content == "end" {
         end_index = Some(i);
         break;
       }
     }
 
-    let end_idx = end_index?; // Must have end
+    let end_idx = end_index?;
 
     // Calculate content boundaries
-    let if_block_start = ruby_ranges[0].start_byte - 2; // Include <%
+    let if_block_start = ruby_ranges[cond_idx].start_byte - 2; // Include <%
     let if_block_end = ruby_ranges[end_idx].end_byte + 2; // Include %>
 
     // Determine what content to keep based on the condition
@@ -626,7 +638,7 @@ impl SourceCodeUnit {
       }
     } else if is_if_true {
       // For if true, keep the if branch content
-      let then_content_start = ruby_ranges[0].end_byte + 2; // After %> of if
+      let then_content_start = ruby_ranges[cond_idx].end_byte + 2; // After %> of if
       let then_content_end = if let Some(else_idx) = else_index {
         ruby_ranges[else_idx].start_byte - 2 // Before <% of else
       } else {
