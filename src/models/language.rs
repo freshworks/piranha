@@ -21,7 +21,7 @@ use crate::utilities::parse_toml;
 
 use super::{
   default_configs::{
-    default_language, ERB, GO, JAVA, JAVA_CS, KOTLIN, PYTHON, RUBY, SCALA, STRINGS, SWIFT, THRIFT, TSX,
+    default_language, ERB, GO, JAVA, JAVA_CS, KOTLIN, PYTHON, RUBY, SCALA, STRINGS, SWIFT, TSX,
     TS_SCHEME, TYPESCRIPT,
   },
   outgoing_edges::Edges,
@@ -280,7 +280,7 @@ impl std::str::FromStr for PiranhaLanguage {
           comment_nodes: vec!["comment".to_string()],
           rules: Some(ruby_rules),
           edges: Some(ruby_edges),
-        }),
+        })
       }
       ERB => {
         // ERB files are HTML with embedded Ruby code

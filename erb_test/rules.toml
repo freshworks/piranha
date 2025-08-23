@@ -19,3 +19,25 @@ query = """
 replace_node = "flag_exp"
 replace = "@treated"
 holes = ["cleanup_flag_name", "treated"]
+
+# Before : 
+# if false
+# else
+#   do_something_else
+# end
+# After :
+#  do_something_else
+[[rules]]
+name = "replace_if_false_with_empty_consequence"
+groups = ["if_cleanup"]
+is_seed_rule = false
+query = """
+(
+  (if
+      condition: (false)
+      alternative: (else) @alternative
+  )@if_statement
+)
+"""
+replace = "@alternative"
+replace_node = "if_statement"
