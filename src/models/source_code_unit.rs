@@ -623,10 +623,14 @@ impl SourceCodeUnit {
     let mut else_index: Option<usize> = None;
     let mut end_index: Option<usize> = None;
     let mut nesting = 0;
+    // List of Ruby block openers that require 'end'
+    let block_openers = [
+      "if ", "unless ", "elsif ", "while ", "until ", "for ", "case ", "begin", "def ", "class ", "module ", "do", "each do |", "do |"
+    ];
     for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
       let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      // Track nested conditionals
-      if ruby_content.starts_with("if ") || ruby_content.starts_with("unless ") || ruby_content.starts_with("elsif ") {
+      // Track nested blocks: increment for any block opener
+      if block_openers.iter().any(|opener| ruby_content.starts_with(opener) || ruby_content.contains(opener)) {
         nesting += 1;
       }
       if *ruby_content == "else" && else_index.is_none() && nesting == 0 {
