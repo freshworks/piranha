@@ -155,7 +155,8 @@ impl SourceCodeUnit {
     let mut ruby_ranges = Vec::new();
 
     // Traverse the ERB tree to find Ruby code nodes
-    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    // Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges, content);
 
     // Sort ranges by start position to ensure they're in order
     ruby_ranges.sort_by_key(|range| range.start_byte);
@@ -171,7 +172,7 @@ impl SourceCodeUnit {
   }
 
   /// Extract Ruby code ranges from ERB tree, ensuring proper boundary handling
-  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>) {
+  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>, content: &str) {
     let node_type = node.kind();
 
     match node_type {
@@ -180,6 +181,12 @@ impl SourceCodeUnit {
         // and exclude the ERB markers (<% %>)
         if let Some(code_node) = node.named_child(0) {
           if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
             // The code node contains the actual Ruby code without ERB markers
             let range = tree_sitter::Range {
               start_byte: code_node.start_byte(),
@@ -195,6 +202,12 @@ impl SourceCodeUnit {
         // For output directives (<%=), handle similarly but preserve the structure
         if let Some(code_node) = node.named_child(0) {
           if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
             let range = tree_sitter::Range {
               start_byte: code_node.start_byte(),
               end_byte: code_node.end_byte(),
@@ -209,7 +222,7 @@ impl SourceCodeUnit {
         // Recursively traverse other nodes
         for i in 0..node.child_count() {
           if let Some(child) = node.child(i) {
-            Self::traverse_erb_node_for_ranges(&child, ranges);
+            Self::traverse_erb_node_for_ranges(&child, ranges, content);
           }
         }
       }
@@ -519,7 +532,6 @@ impl SourceCodeUnit {
   /// Enhanced ERB mixed content handler for all ERB cleanup scenarios
   /// This replaces the single-case handle_erb_if_true_edit with comprehensive mixed content support
   fn handle_erb_mixed_content_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
-    use crate::utilities::tree_sitter_utilities::{get_tree_sitter_edit, position_for_offset};
 
     println!("Handling ERB mixed content edit for file: {:?}", self.path);
     println!("Edit rule: {}", edit.matched_rule());
@@ -531,6 +543,7 @@ impl SourceCodeUnit {
     // Handle different ERB cleanup scenarios
     match rule_name.as_str() {
       "replace_if_false" | "replace_if_true" | "replace_empty_if_true" | "replace_if_false_with_empty_consequence" => {
+        println!("Handling ERB conditional cleanup for rule: {}", rule_name);
         self.handle_erb_conditional_cleanup(edit, source_content)
       }
       "replace_flag_with_boolean_literal" => {
@@ -577,40 +590,63 @@ impl SourceCodeUnit {
   ) -> Option<(String, tree_sitter::InputEdit)> {
     use crate::utilities::tree_sitter_utilities::position_for_offset;
 
-    // Analyze the Ruby ranges to identify if-else-end structure
+    // Search for the correct conditional block among all ruby_ranges
     if ruby_ranges.is_empty() {
       return None;
     }
 
-    let first_ruby = &source_content[ruby_ranges[0].start_byte..ruby_ranges[0].end_byte].trim();
+    let mut conditional_idx: Option<usize> = None;
+    let mut is_if_true = false;
+    let mut is_if_false = false;
 
-    // Check for if condition
-    let (is_if_true, is_if_false) = if first_ruby.contains("if false") {
-      (false, true)
-    } else if first_ruby.contains("if true") {
-      (true, false)
-    } else {
-      return None;
-    };
-
-    // Find else and end positions
-    let mut else_index: Option<usize> = None;
-    let mut end_index: Option<usize> = None;
-
-    for (i, range) in ruby_ranges.iter().enumerate().skip(1) {
-      let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      if ruby_content == &"else" && else_index.is_none() {
-        else_index = Some(i);
-      } else if ruby_content == &"end" {
-        end_index = Some(i);
-        break;
+    // Find the index of the conditional block (if true/if false)
+    for (i, range) in ruby_ranges.iter().enumerate() {
+      let ruby_code = &source_content[range.start_byte..range.end_byte].trim();
+      if ruby_code.starts_with("if ") {
+        if ruby_code.contains("true") {
+          conditional_idx = Some(i);
+          is_if_true = true;
+          break;
+        } else if ruby_code.contains("false") {
+          conditional_idx = Some(i);
+          is_if_false = true;
+          break;
+        }
       }
     }
 
-    let end_idx = end_index?; // Must have end
+    let cond_idx = conditional_idx?;
+
+    // Find else and correct end positions after the conditional using nesting depth
+    let mut else_index: Option<usize> = None;
+    let mut end_index: Option<usize> = None;
+    let mut nesting = 0;
+    // List of Ruby block openers that require 'end'
+    let block_openers = [
+      "if ", "unless ", "elsif ", "while ", "until ", "for ", "case ", "begin", "def ", "class ", "module ", "do", "each do |", "do |"
+    ];
+    for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
+      let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
+      // Track nested blocks: increment for any block opener
+      if block_openers.iter().any(|opener| ruby_content.starts_with(opener) || ruby_content.contains(opener)) {
+        nesting += 1;
+      }
+      if *ruby_content == "else" && else_index.is_none() && nesting == 0 {
+        else_index = Some(i);
+      } else if *ruby_content == "end" {
+        if nesting == 0 {
+          end_index = Some(i);
+          break;
+        } else {
+          nesting -= 1;
+        }
+      }
+    }
+
+    let end_idx = end_index?;
 
     // Calculate content boundaries
-    let if_block_start = ruby_ranges[0].start_byte - 2; // Include <%
+    let if_block_start = ruby_ranges[cond_idx].start_byte - 2; // Include <%
     let if_block_end = ruby_ranges[end_idx].end_byte + 2; // Include %>
 
     // Determine what content to keep based on the condition
@@ -626,7 +662,7 @@ impl SourceCodeUnit {
       }
     } else if is_if_true {
       // For if true, keep the if branch content
-      let then_content_start = ruby_ranges[0].end_byte + 2; // After %> of if
+      let then_content_start = ruby_ranges[cond_idx].end_byte + 2; // After %> of if
       let then_content_end = if let Some(else_idx) = else_index {
         ruby_ranges[else_idx].start_byte - 2 // Before <% of else
       } else {
