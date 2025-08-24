@@ -155,7 +155,8 @@ impl SourceCodeUnit {
     let mut ruby_ranges = Vec::new();
 
     // Traverse the ERB tree to find Ruby code nodes
-    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    // Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges, content);
 
     // Sort ranges by start position to ensure they're in order
     ruby_ranges.sort_by_key(|range| range.start_byte);
@@ -171,7 +172,7 @@ impl SourceCodeUnit {
   }
 
   /// Extract Ruby code ranges from ERB tree, ensuring proper boundary handling
-  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>) {
+  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>, content: &str) {
     let node_type = node.kind();
 
     match node_type {
@@ -180,6 +181,12 @@ impl SourceCodeUnit {
         // and exclude the ERB markers (<% %>)
         if let Some(code_node) = node.named_child(0) {
           if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
             // The code node contains the actual Ruby code without ERB markers
             let range = tree_sitter::Range {
               start_byte: code_node.start_byte(),
@@ -195,6 +202,12 @@ impl SourceCodeUnit {
         // For output directives (<%=), handle similarly but preserve the structure
         if let Some(code_node) = node.named_child(0) {
           if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
             let range = tree_sitter::Range {
               start_byte: code_node.start_byte(),
               end_byte: code_node.end_byte(),
@@ -209,7 +222,7 @@ impl SourceCodeUnit {
         // Recursively traverse other nodes
         for i in 0..node.child_count() {
           if let Some(child) = node.child(i) {
-            Self::traverse_erb_node_for_ranges(&child, ranges);
+            Self::traverse_erb_node_for_ranges(&child, ranges, content);
           }
         }
       }
