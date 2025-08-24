@@ -1,8 +1,8 @@
-<% 
-  is_service_settings_page = true 
-%>
-<% if is_service_settings_page %>
-    <%= "#{I18n.t('account.primary_language_v2')} "%>
+<% if current_account.custom_mailbox_enhancements? %>
+  <% logger.info "Outgoing error detected" %>
+  <div id="outgoing-error-info" class="hide"></div>
+  <div id="incoming-error-info" class="hide"></div>
 <% else %>
-    <%= "#{I18n.t('account.primary_language')} "%>
+  <% logger.info "Outgoing error detected" %>
+  <div id="incoming-error-info" class="hide"></div>
 <% end %>
