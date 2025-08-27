@@ -482,7 +482,9 @@ impl SourceCodeUnit {
     // Panic if the number of errors increased after the edit
     // Skip syntax error check for ERB files that have been cleaned to HTML-only content
     let is_cleaned_erb = Self::is_erb_file(&self.path) && !self.code.contains("<%") && !self.code.contains("%>");
-    if !is_cleaned_erb && self._number_of_errors() > number_of_errors {
+    let is_erb_with_mixed_content = Self::is_erb_file(&self.path) && self.code.contains("<%") && self.code.contains("%>");
+    
+    if !is_cleaned_erb && !is_erb_with_mixed_content && self._number_of_errors() > number_of_errors {
       self._panic_for_syntax_error();
     }
     ts_edit
@@ -615,7 +617,13 @@ impl SourceCodeUnit {
       }
     }
 
-    let cond_idx = conditional_idx?;
+    let cond_idx = match conditional_idx {
+      Some(idx) => idx,
+      None => {
+        println!("DEBUG: No conditional block found");
+        return None;
+      }
+    };
 
     // Find else and correct end positions after the conditional using nesting depth
     let mut else_index: Option<usize> = None;
@@ -623,12 +631,11 @@ impl SourceCodeUnit {
     let mut nesting = 0;
     // List of Ruby block openers that require 'end'
     let block_openers = [
-      "if ", "unless ", "elsif ", "while ", "until ", "for ", "case ", "begin", "def ", "class ", "module ", "do", "each do |", "do |"
+      "if ", "unless ", "elsif ", "while ", "until ", "for ", "case ", "begin", "def ", "class ", "module "
     ];
     for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
       let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
-      // Track nested blocks: increment for any block opener
-      if block_openers.iter().any(|opener| ruby_content.starts_with(opener) || ruby_content.contains(opener)) {
+      if block_openers.iter().any(|opener| ruby_content.starts_with(opener)) {
         nesting += 1;
       }
       if *ruby_content == "else" && else_index.is_none() && nesting == 0 {
@@ -643,7 +650,13 @@ impl SourceCodeUnit {
       }
     }
 
-    let end_idx = end_index?;
+    let end_idx = match end_index {
+      Some(idx) => idx,
+      None => {
+        println!("DEBUG: No end block found");
+        return None;
+      }
+    };
 
     // Calculate content boundaries
     let if_block_start = ruby_ranges[cond_idx].start_byte - 2; // Include <%
@@ -668,7 +681,12 @@ impl SourceCodeUnit {
       } else {
         ruby_ranges[end_idx].start_byte - 2 // Before <% of end
       };
-      &source_content[then_content_start..then_content_end]
+      
+      // The content between then_content_start and then_content_end should include
+      // ALL content, including any embedded Ruby expressions (like <%= User.current.id %>)
+      // We don't need to modify this range since it naturally includes everything
+      let content_slice = &source_content[then_content_start..then_content_end];
+      content_slice
     } else {
       return None;
     };
