@@ -15,7 +15,6 @@ pub(crate) mod capture_group_patterns;
 pub mod default_configs;
 pub(crate) mod concrete_syntax;
 pub mod edit;
-pub mod erb_processor;
 pub mod filter;
 pub mod language;
 pub(crate) mod matches;

@@ -101,7 +101,7 @@ impl SourceCodeUnit {
       piranha_arguments: piranha_arguments.clone(),
     };
     // Panic if allow dirty ast is false and the tree is syntactically incorrect
-    if !piranha_arguments.allow_dirty_ast() && source_code_unit._number_of_errors() > 0 {
+    if !piranha_arguments.allow_dirty_ast() && !Self::is_erb_file(path)  && source_code_unit._number_of_errors() > 0 {
       error!("{}: {}", "Syntax Error".red(), path.to_str().unwrap().red());
       _ = &source_code_unit._panic_for_syntax_error();
     }
@@ -481,8 +481,7 @@ impl SourceCodeUnit {
 
     // Panic if the number of errors increased after the edit
     // Skip syntax error check for ERB files that have been cleaned to HTML-only content
-    let is_cleaned_erb = Self::is_erb_file(&self.path) && !self.code.contains("<%") && !self.code.contains("%>");
-    if !is_cleaned_erb && self._number_of_errors() > number_of_errors {
+    if !Self::is_erb_file(&self.path) && self._number_of_errors() > number_of_errors {
       self._panic_for_syntax_error();
     }
     ts_edit
