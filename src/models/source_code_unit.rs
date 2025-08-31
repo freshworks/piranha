@@ -627,12 +627,12 @@ impl SourceCodeUnit {
     for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
       let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
       // Track nested blocks: increment for any block opener
-      if block_openers.iter().any(|opener| ruby_content.starts_with(opener) || ruby_content.contains(opener)) {
+      if block_openers.iter().any(|opener| ruby_content.starts_with(opener)) && !ruby_content.starts_with("else") {
         nesting += 1;
       }
-      if *ruby_content == "else" && else_index.is_none() && nesting == 0 {
+      if ruby_content.trim() == "else" && else_index.is_none() && nesting == 0 {
         else_index = Some(i);
-      } else if *ruby_content == "end" {
+      } else if ruby_content.trim() == "end" {
         if nesting == 0 {
           end_index = Some(i);
           break;
