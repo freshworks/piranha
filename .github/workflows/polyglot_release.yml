@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   build_ubuntu:
-    runs-on: [self-hosted, ubuntu]
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
     - uses: actions/setup-python@v4
