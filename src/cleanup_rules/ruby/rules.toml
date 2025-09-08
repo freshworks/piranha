@@ -17,11 +17,32 @@ query = """
         condition: (true)
         condition: (parenthesized_statements (true))
       ]
-      consequence : ((then) @consequence)
+      consequence : ((then) @consequence)*
   )@if_statement
 )
 """
 replace = "@consequence"
+replace_node = "if_statement"
+
+# Before : 
+# if true
+# else
+# do_something_else
+# end
+# After :
+[[rules]]
+name = "replace_empty_if_true_block"
+is_seed_rule = false
+query = """
+(
+  (if
+	condition: (_) @cond
+    !consequence
+    alternative: (else)
+  ) @if_statement
+)
+"""
+replace = ""
 replace_node = "if_statement"
 
 # Before : 

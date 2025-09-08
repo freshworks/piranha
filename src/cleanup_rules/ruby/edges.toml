@@ -25,6 +25,11 @@ to = ["delete_all_statements_after_return"]
 
 [[edges]]
 scope = "Parent"
+from = "if_cleanup"
+to = ["replace_empty_if_true_block"]
+
+[[edges]]
+scope = "Parent"
 from = "delete_all_statements_after_return"
 to = ["delete_all_statements_after_return"]
 

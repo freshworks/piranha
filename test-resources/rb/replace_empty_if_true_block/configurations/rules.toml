@@ -1,0 +1,23 @@
+# Test configuration for replace_empty_if_true_block rule
+
+# Before : 
+# if condition
+# else
+# do_something_else
+# end
+# After : (removed)
+[[rules]]
+name = "replace_empty_if_true_block"
+is_seed_rule = true
+query = """
+(
+  (if
+	condition: (_) @cond
+    !consequence
+    alternative: (else)
+  ) @if_statement
+)
+"""
+replace = ""
+replace_node = "if_statement"
+
