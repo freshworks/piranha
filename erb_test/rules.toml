@@ -1,0 +1,43 @@
+#
+# For @cleanup_flag_name = STALE_FLAG
+# Before 
+#  Account.current.esm_enhancements_enabled?
+# After 
+#  true
+#
+[[rules]]
+name = "replace_flag_with_boolean_literal"
+groups = ["replace_expression_with_boolean_literal"]
+query = """
+(((call
+  method: (identifier) @flag_name
+)@flag_exp
+)
+(#eq? @flag_name @cleanup_flag_name)
+)
+"""
+replace_node = "flag_exp"
+replace = "@treated"
+holes = ["cleanup_flag_name", "treated"]
+
+# Before : 
+# if false
+# else
+#   do_something_else
+# end
+# After :
+#  do_something_else
+[[rules]]
+name = "replace_if_false_with_empty_consequence"
+groups = ["if_cleanup"]
+is_seed_rule = false
+query = """
+(
+  (if
+      condition: (false)
+      alternative: (else) @alternative
+  )@if_statement
+)
+"""
+replace = "@alternative"
+replace_node = "if_statement"

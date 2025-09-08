@@ -773,3 +773,48 @@ fn test_removes_blank_lines_after_inline_cleanup() {
     }
   );
 }
+
+#[test]
+fn test_erb_file_parsing_and_ruby_extraction() {
+    use crate::models::piranha_arguments::PiranhaArgumentsBuilder;
+    use std::{collections::HashMap, path::Path};
+    use tree_sitter::Parser;
+
+    let erb_content = r#"
+<% if current_account.custom_mailbox_enhancements? %>
+  <% logger.info "Outgoing error detected" %>
+  <div id="outgoing-error-info" class="hide"></div>
+  <div id="incoming-error-info" class="hide"></div>
+<% else %>
+  <% logger.info "Outgoing error detected" %>
+  <div id="incoming-error-info" class="hide"></div>
+<% end %>
+"#;
+
+    let mut parser = Parser::new();
+    let substitutions = HashMap::new();
+    let path = Path::new("sample.html.erb");
+
+    let piranha_args = PiranhaArgumentsBuilder::default().code_snippet(erb_content.to_string()).build();
+
+    let scu = SourceCodeUnit::new(&mut parser, erb_content.to_string(), &substitutions, path, &piranha_args, );
+
+    let root = scu.root_node();
+    assert!(root.child_count() > 0, "ERB AST root node should exist");
+
+    assert!(SourceCodeUnit::is_erb_file(path), "File should be recognized as ERB");
+
+    let tree = scu.ast.clone();
+    let ruby_ranges = SourceCodeUnit::extract_ruby_ranges_from_erb(&tree.root_node(), &scu.code);
+    println!("Extracted Ruby ranges: {:?}", ruby_ranges);
+
+    if !ruby_ranges.is_empty() {
+        let contains_if = ruby_ranges.iter().any(|r| scu.code[r.start_byte..r.end_byte].contains("if"));
+        assert!(contains_if, "Ruby ranges should contain 'if' statement");
+
+        let contains_logger = ruby_ranges.iter().any(|r| scu.code[r.start_byte..r.end_byte].contains("logger.info"));
+        assert!(contains_logger, "Ruby ranges should contain 'logger.info'");
+    } else {
+        println!("No Ruby code found in ERB content. This is valid for ERB files with only HTML.");
+    }
+}

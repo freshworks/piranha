@@ -13,20 +13,41 @@
 
 //! Defines the entry-point for Piranha.
 use std::{fs, time::Instant};
-
 use log::{debug, info};
+use tree_sitter::Query;
 use polyglot_piranha::{
   execute_piranha, models::piranha_arguments::PiranhaArguments,
   models::piranha_output::PiranhaOutputSummary,
 };
+use serde::de;
+use tree_sitter::{Parser, Range};
+use polyglot_piranha::utilities::tree_sitter_utilities::get_all_matches_for_query;
+use polyglot_piranha::models::default_configs::RUBY;
 
+fn demo_rb_piranha_cleanups() {
+  let args = PiranhaArguments::from_cli();
+
+  let piranha_output_summaries = execute_piranha(&args);
+
+  if let Some(path) = args.path_to_output_summary() {
+    write_output_summary(piranha_output_summaries, path);
+  }
+
+}
 fn main() {
+  // Add ERB parsing demo
+  // demo_erb_parsing();
+
+  // demo_rb_parsing();
+  // return;
+
   let now = Instant::now();
   env_logger::init();
 
   info!("Executing Polyglot Piranha");
 
   let args = PiranhaArguments::from_cli();
+  println!("args: {:?}", args);
 
   debug!("Piranha Arguments are \n{:#?}", args);
   let piranha_output_summaries = execute_piranha(&args);

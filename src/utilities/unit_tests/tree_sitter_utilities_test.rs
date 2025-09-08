@@ -12,10 +12,10 @@ Copyright (c) 2023 Uber Technologies, Inc.
 */
 use std::collections::HashMap;
 
-use tree_sitter::Query;
+use tree_sitter::{Query, Range};
 
 use crate::{
-  models::{capture_group_patterns::CGPattern, default_configs::JAVA, language::PiranhaLanguage},
+  models::{capture_group_patterns::CGPattern, default_configs::{ERB, JAVA, RUBY}, language::PiranhaLanguage},
   utilities::{tree_sitter_utilities::get_all_matches_for_query, Instantiate},
 };
 
@@ -71,6 +71,7 @@ fn test_get_all_matches_for_query_positive() {
   );
   assert_eq!(matches.len(), 2);
 }
+
 
 #[test]
 fn test_get_all_matches_for_query_negative() {

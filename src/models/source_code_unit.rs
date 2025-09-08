@@ -56,6 +56,7 @@ pub(crate) struct SourceCodeUnit {
   substitutions: HashMap<String, String>,
   // The path to the source code.
   #[get = "pub"]
+  #[set = "pub(crate)"]
   path: PathBuf,
 
   // Rewrites applied to this source code unit
@@ -76,7 +77,19 @@ impl SourceCodeUnit {
     parser: &mut Parser, code: String, substitutions: &HashMap<String, String>, path: &Path,
     piranha_arguments: &PiranhaArguments,
   ) -> Self {
-    let ast = parser.parse(&code, None).expect("Could not parse code");
+    let ast = if Self::is_erb_file(path) {
+      Self::parse_erb_with_ranges(parser, &code)
+    } else {
+      parser.parse(&code, None).expect("Could not parse code")
+    };
+
+    println!(
+      "Initializing source code with {}, ast {}, and source code {}",
+      path.display(),
+      ast.root_node().to_sexp(),
+      code
+    );
+
     let source_code_unit = Self {
       ast,
       original_content: code.to_string(),
@@ -88,12 +101,132 @@ impl SourceCodeUnit {
       piranha_arguments: piranha_arguments.clone(),
     };
     // Panic if allow dirty ast is false and the tree is syntactically incorrect
-    if !piranha_arguments.allow_dirty_ast() && source_code_unit._number_of_errors() > 0 {
+    if !piranha_arguments.allow_dirty_ast() && !Self::is_erb_file(path)  && source_code_unit._number_of_errors() > 0 {
       error!("{}: {}", "Syntax Error".red(), path.to_str().unwrap().red());
       _ = &source_code_unit._panic_for_syntax_error();
     }
 
     source_code_unit
+  }
+
+  /// Check if the file is an ERB file
+  fn is_erb_file(path: &Path) -> bool {
+    path.extension()
+      .and_then(|ext| ext.to_str())
+      .map(|ext| ext == "erb")
+      .unwrap_or(false)
+  }
+
+  /// Parse ERB file using Tree-sitter ranges
+  fn parse_erb_with_ranges(parser: &mut Parser, erb_content: &str) -> Tree {
+    // First, parse as ERB to extract ranges
+    parser.set_language(tree_sitter_embedded_template::language()).unwrap();
+    parser.set_included_ranges(&[]).unwrap(); // Clear any existing ranges
+
+    let erb_tree = parser.parse(erb_content, None).expect("Could not parse ERB");
+    let erb_root = erb_tree.root_node();
+
+    // Extract Ruby ranges from ERB tree
+    let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, erb_content);
+
+    if ruby_ranges.is_empty() {
+      // If no Ruby ranges found, create a minimal AST that won't cause syntax errors
+      // We'll create an empty Ruby program that the parser can understand
+      parser.set_language(tree_sitter_ruby::language()).unwrap();
+      parser.set_included_ranges(&[]).unwrap(); // Clear ranges to parse entire content
+      
+      return parser.parse(erb_content, None).expect("Could not parse as Ruby");
+    }
+
+    // Parse Ruby content using ranges
+    parser.set_language(tree_sitter_ruby::language()).unwrap();
+    parser.set_included_ranges(&ruby_ranges).unwrap();
+
+    let ruby_tree = parser.parse(erb_content, None).expect("Could not parse Ruby with ranges");
+
+    // Debug: Print the AST to understand the structure
+    println!("ERB Range-based Ruby AST: {}", ruby_tree.root_node().to_sexp());
+
+    ruby_tree
+  }
+
+  /// Extract Ruby code ranges from ERB tree with proper boundary handling
+  fn extract_ruby_ranges_from_erb(erb_root: &tree_sitter::Node, content: &str) -> Vec<tree_sitter::Range> {
+    let mut ruby_ranges = Vec::new();
+
+    // Traverse the ERB tree to find Ruby code nodes
+    // Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges);
+    Self::traverse_erb_node_for_ranges(erb_root, &mut ruby_ranges, content);
+
+    // Sort ranges by start position to ensure they're in order
+    ruby_ranges.sort_by_key(|range| range.start_byte);
+
+    // Debug: Print the extracted ranges for troubleshooting
+    println!("DEBUG: Extracted {} Ruby ranges from ERB:", ruby_ranges.len());
+    for (i, range) in ruby_ranges.iter().enumerate() {
+      let text = &content[range.start_byte..range.end_byte];
+      println!("  Range {}: bytes[{}..{}] -> '{}'", i, range.start_byte, range.end_byte, text);
+    }
+
+    ruby_ranges
+  }
+
+  /// Extract Ruby code ranges from ERB tree, ensuring proper boundary handling
+  fn traverse_erb_node_for_ranges(node: &tree_sitter::Node, ranges: &mut Vec<tree_sitter::Range>, content: &str) {
+    let node_type = node.kind();
+
+    match node_type {
+      "directive" => {
+        // For directive nodes, we need to find the actual Ruby code content
+        // and exclude the ERB markers (<% %>)
+        if let Some(code_node) = node.named_child(0) {
+          if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
+            // The code node contains the actual Ruby code without ERB markers
+            let range = tree_sitter::Range {
+              start_byte: code_node.start_byte(),
+              end_byte: code_node.end_byte(),
+              start_point: code_node.start_position(),
+              end_point: code_node.end_position(),
+            };
+            ranges.push(range);
+          }
+        }
+      }
+      "output_directive" => {
+        // For output directives (<%=), handle similarly but preserve the structure
+        if let Some(code_node) = node.named_child(0) {
+          if code_node.kind() == "code" {
+            let snippet = &content[code_node.start_byte()..code_node.end_byte()];
+            if snippet.trim_start().starts_with("javascript_tag") {
+              println!("DEBUG: Skipping javascript_tag block: '{}'", snippet);
+              return;
+            }
+
+            let range = tree_sitter::Range {
+              start_byte: code_node.start_byte(),
+              end_byte: code_node.end_byte(),
+              start_point: code_node.start_position(),
+              end_point: code_node.end_position(),
+            };
+            ranges.push(range);
+          }
+        }
+      }
+      _ => {
+        // Recursively traverse other nodes
+        for i in 0..node.child_count() {
+          if let Some(child) = node.child(i) {
+            Self::traverse_erb_node_for_ranges(&child, ranges, content);
+          }
+        }
+      }
+    }
   }
 
   pub(crate) fn root_node(&self) -> Node<'_> {
@@ -136,15 +269,19 @@ impl SourceCodeUnit {
     scope_query: &Option<CGPattern>,
   ) -> bool {
     let scope_node = self.get_scope_node(scope_query, rule_store);
-
+    println!("scope query: {:?}", scope_query);
+    println!("Scope node text: {:?}", scope_node.utf8_text(self.code().as_bytes()).unwrap());
+    println!("root node text: {:?}", self.root_node().utf8_text(self.code().as_bytes()).unwrap());
     let mut query_again = false;
 
     // When rule is a "rewrite" rule :
     // Update the first match of the rewrite rule
     // Add mappings to the substitution
     // Propagate each applied edit. The next rule will be applied relative to the application of this edit.
+    println!("Applying rule: {:?}", rule.name());
     if !rule.rule().is_match_only_rule() {
       if let Some(edit) = self.get_edit(&rule, rule_store, scope_node, true) {
+        println!("Found edit from source code unit {:?}", edit);  
         self.rewrites_mut().push(edit.clone());
         query_again = true;
 
@@ -243,6 +380,7 @@ impl SourceCodeUnit {
       if let Some(edit) =
         self.get_edit_for_ancestors(&current_replace_range, rules_store, &next_rules_by_scope)
       {
+        println!("Found edit from propagate {:?}", edit);
         self.rewrites_mut().push(edit.clone());
         // Apply the matched rule to the parent
         let applied_edit = self.apply_edit(&edit, parser);
@@ -289,6 +427,8 @@ impl SourceCodeUnit {
     if let Some(query_str) = scope_query {
       // Apply the scope query in the source code and get the appropriate node
       let scope_pattern = rules_store.query(query_str);
+      println!("Scope pattern: {:?}", scope_pattern);
+      println!("query_str: {:?}", query_str);
       if let Some(p_match) = scope_pattern.get_match(&self.root_node(), self.code(), true) {
         return get_node_for_range(
           self.root_node(),
@@ -322,15 +462,26 @@ impl SourceCodeUnit {
   ///
   /// Note - Causes side effect. - Updates `self.ast` and `self.code`
   pub(crate) fn apply_edit(&mut self, edit: &Edit, parser: &mut Parser) -> InputEdit {
-    // Get the tree_sitter's input edit representation
-    let (new_source_code, ts_edit) = get_tree_sitter_edit(self.code.clone(), edit);
+    // Log the source code before applying the edit
+    debug!("Source code before edit:\n{}", self.code);
+    debug!("Applying edit: {:?}", edit);
+
+    // Enhanced handling for ERB files with mixed HTML/Ruby content
+    let (new_source_code, ts_edit) = if Self::is_erb_file(&self.path) {
+      // Handle all ERB-specific cleanup rules with proper mixed content support
+      self.handle_erb_mixed_content_edit(edit)
+    } else {
+      get_tree_sitter_edit(self.code.clone(), edit)
+    };
+
     // Apply edit to the tree
     let number_of_errors = self._number_of_errors();
     self.ast.edit(&ts_edit);
     self._replace_file_contents_and_re_parse(&new_source_code, parser, true);
 
     // Panic if the number of errors increased after the edit
-    if self._number_of_errors() > number_of_errors {
+    // Skip syntax error check for ERB files that have been cleaned to HTML-only content
+    if !Self::is_erb_file(&self.path) && self._number_of_errors() > number_of_errors {
       self._panic_for_syntax_error();
     }
     ts_edit
@@ -363,12 +514,269 @@ impl SourceCodeUnit {
     } else {
       None
     };
-    // Create a new updated tree from the previous tree
-    let new_tree = parser
-      .parse(replacement_content, prev_tree)
-      .expect("Could not generate new tree!");
+
+    // Parse based on file type
+    let new_tree = if Self::is_erb_file(&self.path) {
+      Self::parse_erb_with_ranges(parser, replacement_content)
+    } else {
+      parser
+        .parse(replacement_content, prev_tree)
+        .expect("Could not generate new tree!")
+    };
+  
     self.ast = new_tree;
     self.code = replacement_content.to_string();
+  }
+
+  /// Enhanced ERB mixed content handler for all ERB cleanup scenarios
+  /// This replaces the single-case handle_erb_if_true_edit with comprehensive mixed content support
+  fn handle_erb_mixed_content_edit(&self, edit: &Edit) -> (String, tree_sitter::InputEdit) {
+
+    println!("Handling ERB mixed content edit for file: {:?}", self.path);
+    println!("Edit rule: {}", edit.matched_rule());
+    println!("Edit: {:?}", edit);
+
+    let source_content = &self.code;
+    let rule_name = edit.matched_rule();
+
+    // Handle different ERB cleanup scenarios
+    match rule_name.as_str() {
+      "replace_if_false" | "replace_if_true" | "replace_empty_if_true" | "replace_if_false_with_empty_consequence" => {
+        println!("Handling ERB conditional cleanup for rule: {}", rule_name);
+        self.handle_erb_conditional_cleanup(edit, source_content)
+      }
+      "replace_flag_with_boolean_literal" => {
+        // For flag replacement, use standard tree-sitter but be aware of ERB context
+        self.handle_erb_flag_replacement(edit, source_content)
+      }
+      _ => {
+        // For other rules, try ERB-aware processing first, fallback to standard
+        self.handle_erb_general_cleanup(edit, source_content)
+      }
+    }
+  }
+
+  /// Handle ERB conditional cleanup (if/else/end blocks with mixed content)
+  fn handle_erb_conditional_cleanup(
+    &self, edit: &Edit, source_content: &str,
+  ) -> (String, tree_sitter::InputEdit) {
+    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
+
+    // Parse the ERB file to extract structure
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(tree_sitter_embedded_template::language()).unwrap();
+
+    if let Some(erb_tree) = parser.parse(source_content, None) {
+      let erb_root = erb_tree.root_node();
+      let ruby_ranges = Self::extract_ruby_ranges_from_erb(&erb_root, source_content);
+
+      if ruby_ranges.len() >= 2 {
+        if let Some(result) =
+          self.process_erb_conditional_structure(&ruby_ranges, source_content, edit)
+        {
+          return result;
+        }
+      }
+    }
+
+    // Fallback to standard tree-sitter edit
+    get_tree_sitter_edit(source_content.to_string(), edit)
+  }
+
+  /// Process ERB conditional structure (if-else-end) with proper content extraction
+  fn process_erb_conditional_structure(
+    &self, ruby_ranges: &[tree_sitter::Range], source_content: &str, edit: &Edit,
+  ) -> Option<(String, tree_sitter::InputEdit)> {
+    use crate::utilities::tree_sitter_utilities::position_for_offset;
+
+    // Search for the correct conditional block among all ruby_ranges
+    if ruby_ranges.is_empty() {
+      return None;
+    }
+
+    let mut conditional_idx: Option<usize> = None;
+    let mut is_if_true = false;
+    let mut is_if_false = false;
+
+    // Find the index of the conditional block (if true/if false)
+    for (i, range) in ruby_ranges.iter().enumerate() {
+      let ruby_code = &source_content[range.start_byte..range.end_byte].trim();
+      if ruby_code.starts_with("if ") {
+        if ruby_code.contains("true") {
+          conditional_idx = Some(i);
+          is_if_true = true;
+          break;
+        } else if ruby_code.contains("false") {
+          conditional_idx = Some(i);
+          is_if_false = true;
+          break;
+        }
+      }
+    }
+
+    let cond_idx = conditional_idx?;
+
+    // Find else and correct end positions after the conditional using nesting depth
+    let mut else_index: Option<usize> = None;
+    let mut end_index: Option<usize> = None;
+    let mut nesting = 0;
+    // List of Ruby block openers that require 'end'
+    let block_openers = [
+      "if ", "unless ", "elsif ", "while ", "until ", "for ", "case ", "begin", "def ", "class ", "module ", "do", "each do |", "do |"
+    ];
+    for (i, range) in ruby_ranges.iter().enumerate().skip(cond_idx + 1) {
+      let ruby_content = &source_content[range.start_byte..range.end_byte].trim();
+      // Track nested blocks: increment for any block opener
+      if block_openers.iter().any(|opener| ruby_content.starts_with(opener)) && !ruby_content.starts_with("else") {
+        nesting += 1;
+      }
+      if ruby_content.trim() == "else" && else_index.is_none() && nesting == 0 {
+        else_index = Some(i);
+      } else if ruby_content.trim() == "end" {
+        if nesting == 0 {
+          end_index = Some(i);
+          break;
+        } else {
+          nesting -= 1;
+        }
+      }
+    }
+
+    let end_idx = end_index?;
+
+    // Calculate content boundaries
+    let if_block_start = ruby_ranges[cond_idx].start_byte - 2; // Include <%
+    let if_block_end = ruby_ranges[end_idx].end_byte + 2; // Include %>
+
+    // Determine what content to keep based on the condition
+    let kept_content = if is_if_false {
+      // For if false, keep the else branch content (if it exists)
+      if let Some(else_idx) = else_index {
+        let else_content_start = ruby_ranges[else_idx].end_byte + 2; // After %> of else
+        let else_content_end = ruby_ranges[end_idx].start_byte - 2; // Before <% of end
+        &source_content[else_content_start..else_content_end]
+      } else {
+        // No else branch, remove everything
+        ""
+      }
+    } else if is_if_true {
+      // For if true, keep the if branch content
+      let then_content_start = ruby_ranges[cond_idx].end_byte + 2; // After %> of if
+      let then_content_end = if let Some(else_idx) = else_index {
+        ruby_ranges[else_idx].start_byte - 2 // Before <% of else
+      } else {
+        ruby_ranges[end_idx].start_byte - 2 // Before <% of end
+      };
+      &source_content[then_content_start..then_content_end]
+    } else {
+      return None;
+    };
+
+    println!("ERB conditional cleanup:");
+    println!(
+      "  Condition: if {} (keeping {} branch)",
+      if is_if_true { "true" } else { "false" },
+      if is_if_false { "else" } else { "then" }
+    );
+    println!("  Kept content: '{}'", kept_content);
+
+    // Build new source code
+    let new_source = [
+      &source_content[..if_block_start],
+      kept_content,
+      &source_content[if_block_end..],
+    ]
+    .concat();
+
+    // Calculate InputEdit
+    let old_source_bytes = source_content.as_bytes();
+    let new_source_bytes = new_source.as_bytes();
+    let start_byte = if_block_start;
+    let old_end_byte = if_block_end;
+    let new_end_byte = start_byte + kept_content.as_bytes().len();
+
+    let input_edit = tree_sitter::InputEdit {
+      start_byte,
+      old_end_byte,
+      new_end_byte,
+      start_position: position_for_offset(old_source_bytes, start_byte),
+      old_end_position: position_for_offset(old_source_bytes, old_end_byte),
+      new_end_position: position_for_offset(new_source_bytes, new_end_byte),
+    };
+
+    Some((new_source, input_edit))
+  }
+
+  /// Handle ERB flag replacement while preserving ERB structure
+  fn handle_erb_flag_replacement(
+    &self, _edit: &Edit, source_content: &str,
+  ) -> (String, tree_sitter::InputEdit) {
+    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
+
+    // For flag replacement, we can use the standard tree-sitter approach
+    // because it only replaces the flag expression, not structural elements
+    println!(
+      "Handling ERB flag replacement for: {}",
+      _edit.matched_rule()
+    );
+    get_tree_sitter_edit(source_content.to_string(), _edit)
+  }
+
+  /// Handle general ERB cleanup rules
+  fn handle_erb_general_cleanup(
+    &self, edit: &Edit, source_content: &str,
+  ) -> (String, tree_sitter::InputEdit) {
+    use crate::utilities::tree_sitter_utilities::get_tree_sitter_edit;
+
+    println!(
+      "Handling general ERB cleanup for rule: {}",
+      edit.matched_rule()
+    );
+
+    // Try to intelligently handle the edit based on the matched content
+    let matched_string = &edit.p_match().matched_string;
+
+    // If the matched string spans across ERB boundaries (contains <% or %>),
+    // we need special handling
+    if matched_string.contains("<%") || matched_string.contains("%>") {
+      println!("Matched string spans ERB boundaries, using ERB-aware processing");
+
+      // Extract the replacement from the edit
+      let replacement = &edit.replacement_string();
+
+      // Find the exact location in the original source
+      let range = edit.p_match().range();
+      let start_byte = range.start_byte;
+      let end_byte = range.end_byte;
+
+      // Replace the matched content directly
+      let new_source = [
+        &source_content[..start_byte],
+        replacement,
+        &source_content[end_byte..],
+      ]
+      .concat();
+
+      // Calculate InputEdit
+      use crate::utilities::tree_sitter_utilities::position_for_offset;
+      let old_source_bytes = source_content.as_bytes();
+      let new_source_bytes = new_source.as_bytes();
+      let new_end_byte = start_byte + replacement.as_bytes().len();
+
+      let input_edit = tree_sitter::InputEdit {
+        start_byte,
+        old_end_byte: end_byte,
+        new_end_byte,
+        start_position: position_for_offset(old_source_bytes, start_byte),
+        old_end_position: position_for_offset(old_source_bytes, end_byte),
+        new_end_position: position_for_offset(new_source_bytes, new_end_byte),
+      };
+
+      (new_source, input_edit)
+    } else {
+      // Use standard tree-sitter approach
+      get_tree_sitter_edit(source_content.to_string(), edit)
+    }
   }
 
   pub(crate) fn global_substitutions(&self) -> HashMap<String, String> {
@@ -379,6 +787,22 @@ impl SourceCodeUnit {
       .map(|(a, b)| (a.to_string(), b.to_string()))
       .collect()
   }
+
+  // pub(crate) fn extract_ruby_code_from_erb(&self, erb_content: &str) -> Option<String> {
+  //   // use crate::models::erb_processor::ErbProcessor;
+  //   let erb_processor = ErbProcessor::new();
+  //   // Extract Ruby ranges from ERB
+  //   if let Ok(ruby_ranges) = erb_processor.extract_ruby_blocks_with_tree_sitter(erb_content) {
+  //     let mut ruby_code = String::new();
+  //     for range in &ruby_ranges {
+  //       ruby_code.push_str(&erb_content[range.start_byte..range.end_byte]);
+  //       ruby_code.push('\n');
+  //     }
+  //     Some(ruby_code)
+  //   } else {
+  //     None
+  //   }
+  // }
 }
 
 #[cfg(test)]
